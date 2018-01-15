@@ -14,4 +14,6 @@ var Queue_1 = require("./lib/Queue");
 exports.Queue = Queue_1.Queue;
 var Subscription_1 = require("./lib/Subscription");
 exports.Subscription = Subscription_1.Subscription;
+var PubSubServer_2 = require("./lib/PubSubServer");
+exports.PubSubServer = PubSubServer_2.PubSubServer;
 //# sourceMappingURL=index.js.map
