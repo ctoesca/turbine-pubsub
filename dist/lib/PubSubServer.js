@@ -350,7 +350,7 @@ class PubSubServer extends turbine.services.TbaseService {
     }
     onCloseClient(e) {
         var id = e.currentTarget.id;
-        this.logger.info("onCloseClient " + id);
+        this.logger.debug("onCloseClient " + id);
         app.ClusterManager.getClient().hdel("clientsConnexions", e.data.connId);
     }
     getClientsById(id) {

@@ -27,7 +27,10 @@ class Client extends TeventDispatcher {
         else
             this.conn.on('message', this.onMessage.bind(this));
         this.conn.on('close', this.onClose.bind(this));
-        this.logger.info("Client créé " + conn.id + ". PROTOCOL: " + this.conn.protocol);
+        this.conn.on('error', (e) => {
+            this.logger.debug("error " + e);
+        });
+        this.logger.debug("Client créé " + conn.id + ". PROTOCOL: " + this.conn.protocol);
     }
     flatify() {
         return new Promise(function (resolve, reject) {

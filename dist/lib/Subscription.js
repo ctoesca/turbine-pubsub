@@ -51,7 +51,7 @@ class Subscription extends TeventDispatcher {
         }
         else {
             if (this.logger)
-                this.logger.info(this.channelName + " envoi message à un client non connecté. Ajout dans le tampon (cid=" + this.client.id + ")");
+                this.logger.debug(this.channelName + " envoi message à un client non connecté. Ajout dans le tampon (cid=" + this.client.id + ")");
             this._queue.addMessage(message);
         }
         return count;
