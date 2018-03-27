@@ -227,9 +227,6 @@ class PubSubServer extends turbine.services.TbaseService {
             this.logger.error("onCleanClusterClientsTimer: ", err);
         }.bind(this));
     }
-    removeMessagesQueues() {
-        return app.ClusterManager.getClient().keys("*_messages_queue");
-    }
     onCleanClientsTimer(evt) {
         var now = new Date().getTime() / 1000;
         var connectedClients = 0;

@@ -35,7 +35,6 @@ export declare class PubSubServer extends turbine.services.TbaseService {
     getChannelsManager(): ChannelsManager;
     sendChannelEvent(type: string, channelName: string, DBClient: any): void;
     onCleanClusterClientsTimer(): void;
-    removeMessagesQueues(): Promise<{}>;
     onCleanClientsTimer(evt: Tevent): void;
     eachClient(callback: any): void;
     removeClient(client: Client): number;

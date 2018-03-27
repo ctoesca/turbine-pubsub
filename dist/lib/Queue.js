@@ -8,6 +8,7 @@ class Queue extends TeventDispatcher {
     constructor(subscription) {
         super();
         this.messages = [];
+        this.maxLength = 100;
         this.subscription = subscription;
         this.logger = app.getLogger("Queue");
     }
@@ -15,6 +16,17 @@ class Queue extends TeventDispatcher {
         return this.subscription.id + "_messages_queue";
     }
     addMessage(message) {
+        if (this.messages.length > this.maxLength) {
+            this.clear()
+                .then(function () {
+                this._addMessage(message);
+            }.bind(this));
+        }
+        else {
+            this._addMessage(message);
+        }
+    }
+    _addMessage(message) {
         app.ClusterManager.getClient().rpush(this.getKey(), JSON.stringify(message));
         this.messages.push(message);
         this.dispatchEvent(new Tevent("MESSAGE_ADDED", message));
@@ -58,8 +70,11 @@ class Queue extends TeventDispatcher {
         this.messages = null;
     }
     clear() {
-        this.messages = [];
-        app.ClusterManager.getClient().del(this.getKey());
+        return app.ClusterManager.getClient().del(this.getKey())
+            .then(function (result) {
+            this.logger.debug("Suppression message_queue: " + result);
+            this.messages = [];
+        }.bind(this));
     }
 }
 exports.Queue = Queue;
