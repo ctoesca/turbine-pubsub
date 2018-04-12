@@ -17,6 +17,7 @@ export declare class PubSubServer extends turbine.services.TbaseService {
     cleanClusterClientsTimer: Ttimer;
     _channelsManager: ChannelsManager;
     constructor(name: any, server: any, config: any);
+    canSubscribe(client: any, channelName: any): Promise<boolean>;
     getDefaultConfig(): {
         "active": boolean;
         "apiPath": string;

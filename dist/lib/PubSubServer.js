@@ -26,6 +26,9 @@ class PubSubServer extends turbine.services.TbaseService {
         this._channelsManager = new ChannelsManager_1.ChannelsManager(this);
         this.logger.info("PubSubServer created active=" + this.active);
     }
+    canSubscribe(client, channelName) {
+        return Promise.resolve(true);
+    }
     getDefaultConfig() {
         return {
             "active": true,

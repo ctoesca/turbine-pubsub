@@ -276,16 +276,30 @@ class Client extends TeventDispatcher {
             var subs = [];
             var channelsManager = this.server.getChannelsManager();
             var channelsNames = "";
+            var promises = [];
             for (var i = 0; i < args.channels.length; i++) {
-                channelsNames += args.channels[i].name + " ";
-                var channel = channelsManager.getChannel(args.channels[i].name, true);
-                var sub = channel.subscribeClient(this, args.channels[i].notifySubscribeEvents);
-                sub = { channel: channel.name, id: sub.id, notifySubscribeEvents: sub.notifySubscribeEvents, pendingMessages: sub.getQueue().consume() };
-                subs.push(sub);
-                this.logger.debug("user " + userName + " => SUBSCRIBE channel '" + channel.name + "'. notifySubscribeEvents=" + args.channels[i].notifySubscribeEvents);
+                promises.push(this.server.canSubscribe(this, args.channels[i].name));
             }
-            this.logger.info("user " + userName + " => SUBSCRIBE =>> " + args.channels.length + " channel(s)");
-            success(subs);
+            Promise.all(promises)
+                .then(function (result) {
+                let cancelled = 0;
+                for (var i = 0; i < args.channels.length; i++) {
+                    let canSubscribe = result[i];
+                    if (canSubscribe) {
+                        var channel = channelsManager.getChannel(args.channels[i].name, true);
+                        channelsNames += args.channels[i].name + " ";
+                        var sub = channel.subscribeClient(this, args.channels[i].notifySubscribeEvents);
+                        sub = { channel: channel.name, id: sub.id, notifySubscribeEvents: sub.notifySubscribeEvents, pendingMessages: sub.getQueue().consume() };
+                        subs.push(sub);
+                        this.logger.debug("user " + userName + " => SUBSCRIBE channel '" + channel.name + "'. notifySubscribeEvents=" + args.channels[i].notifySubscribeEvents);
+                    }
+                    else {
+                        cancelled++;
+                    }
+                }
+                success(subs);
+                this.logger.info("user " + userName + " => SUBSCRIBE =>> " + subs.length + " channel(s) - cancelled subscriptions: " + cancelled);
+            }.bind(this));
         }
     }
     touchClusterClient() {
