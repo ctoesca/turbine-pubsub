@@ -13,7 +13,7 @@ class Subscription extends TeventDispatcher {
         this.clientDestroyTimestamp = null;
         this.setClient(client);
         this.channelName = channelName;
-        this.id = this.channelName + "_" + this.client.id;
+        this.id = this.channelName + "_" + this.client.getConnId();
         this._queue = new Queue_js_1.Queue(this);
         this.logger = app.getLogger("Subscription");
     }
@@ -73,6 +73,24 @@ class Subscription extends TeventDispatcher {
         this.client.on("CLOSE", this._onClientClose, this);
     }
     _onClientClose(e) {
+        var redisKey = e.data.connId + "_" + this.channelName;
+        app.ClusterManager.getClient().hget("subscriptions", redisKey)
+            .then(result => {
+            var subscription = JSON.parse(result);
+            if (subscription == null) {
+                throw "subscription " + redisKey + " = NULL";
+            }
+            else {
+                subscription.connId = null;
+                return app.ClusterManager.getClient().hset("subscriptions", redisKey, JSON.stringify(subscription));
+            }
+        })
+            .then(result => {
+            this.logger.debug("subscriptions " + redisKey + " => set connId = NULL");
+        })
+            .catch(err => {
+            this.logger.error("subscription._onClientClose: ", err);
+        });
     }
     _onClientDestroy(e) {
         if (this.client)
@@ -88,9 +106,9 @@ class Subscription extends TeventDispatcher {
     }
     free() {
         if (this.client)
-            this.logger.info("Subscription.free: client=" + this.client.id);
+            this.logger.debug("Subscription.free: channelName=" + this.channelName + ", client=" + this.client.id);
         else
-            this.logger.info("Subscription.free: client=null");
+            this.logger.debug("Subscription.free: channelName=" + this.channelName + ", client=null");
         super.free();
         if (this.client)
             this.client.offByCtx(this);

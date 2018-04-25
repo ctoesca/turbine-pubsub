@@ -13,7 +13,7 @@ export declare class Subscription extends TeventDispatcher {
     channelName: string;
     noClientTimeout: number;
     clientDestroyTimestamp: number;
-    client: any;
+    client: Client;
     constructor(channelName: string, client: Client);
     toJson(): string;
     fromJson(json: string): any;

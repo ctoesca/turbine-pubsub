@@ -39,18 +39,19 @@ export declare class PubSubServer extends turbine.services.TbaseService {
     onCleanClientsTimer(evt: Tevent): void;
     eachClient(callback: any): void;
     removeClient(client: Client): number;
-    getUserSession(sid: string): Promise<{}>;
+    getUserSession(req: express.Request): Promise<{}>;
+    getCookies(req: express.Request): {};
     onConnection(conn: any, req: express.Request): void;
     onDestroyClient(e: Tevent): void;
     onCloseClient(e: Tevent): void;
     getClientsById(id: string): any[];
     getClientsByUsername(username: string): any[];
-    onRedisPubSubMessage(channel: string, data: any): void;
+    onRedisPubSubMessage(redisChannel: string, data: any): void;
     broadcast(messages: any, exclude?: any): void;
     sendToUsers(userNames: string[], messages: any): void;
     sendMessagesToLocalUsersNames(userNames: any, messages: any): void;
     sendMessagesToLocalClients(clientsId: any, messages: any): void;
-    disconnectClient(id: string): void;
+    disconnectClient(id: string): any[];
     processBeforeRequest(req: express.Request, res: express.Response, next: express.NextFunction): boolean;
     initRoutes(): void;
 }

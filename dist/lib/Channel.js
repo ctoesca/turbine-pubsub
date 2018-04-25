@@ -73,16 +73,16 @@ class Channel extends TeventDispatcher {
             app.ClusterManager.getClient().rpush(key, JSON.stringify(message), function (err, result) {
                 if (err) {
                     reject(err);
-                    this.logger.error("storeMessage.rpush: " + err.toString());
+                    this.logger.debug("storeMessage.rpush: " + err.toString());
                 }
                 else {
                     app.ClusterManager.getClient().llen(key, function (err, count) {
                         if (err) {
-                            this.logger.error("Channel '" + this.name + "': storeMessage.llen: " + err.toString());
+                            this.logger.debug("Channel '" + this.name + "': storeMessage.llen: " + err.toString());
                             reject(err);
                         }
                         else {
-                            this.logger.error("Channel '" + this.name + "': storeMessage.llen = " + count);
+                            this.logger.debug("Channel '" + this.name + "': storeMessage.llen = " + count);
                             if (count > this.maxStoredMessages) {
                                 app.ClusterManager.getClient().lpop(key, function (err, result) {
                                     if (err) {
@@ -90,7 +90,7 @@ class Channel extends TeventDispatcher {
                                         reject(err);
                                     }
                                     else {
-                                        this.logger.error("storeMessage.lpop: success");
+                                        this.logger.debug("storeMessage.lpop: success");
                                         resolve();
                                     }
                                 }.bind(this));
@@ -146,7 +146,7 @@ class Channel extends TeventDispatcher {
         if (arguments.length == 2)
             sub.notifySubscribeEvents = notifySubscribeEvents;
         if (sub.notifySubscribeEvents)
-            this.sendChannelEvent(client, "subscribe");
+            this.sendChannelEvent(client.getSafeDBClient(), "subscribe");
         return sub;
     }
     createSubscription(client) {
@@ -161,7 +161,7 @@ class Channel extends TeventDispatcher {
         for (var i = 0; i < this.subscriptions.length; i++) {
             var sub = this.subscriptions[i];
             if (sub.getClient().instanceId === client.instanceId) {
-                this.logger.info("Channel.unsubscribeClient client.id=" + client.id + ", sub.id=" + sub.id);
+                this.logger.debug("Channel.unsubscribeClient client.id=" + client.id + ", sub.id=" + sub.id);
                 r = sub;
                 sub.free();
                 break;
@@ -175,7 +175,7 @@ class Channel extends TeventDispatcher {
             if (this.subscriptions[i].id == id) {
                 var client = this.subscriptions[i].client;
                 app.ClusterManager.getClient().hdel(this.redisKey, client.getConnId() + "_" + this.name);
-                this.sendChannelEvent(client, "unsubscribe");
+                this.sendChannelEvent(client.id, "unsubscribe");
                 this.subscriptions.splice(i, 1);
                 this.logger.debug("Channel.removeSubscription on channel " + this.name + ", client.id=" + client.id);
                 break;
@@ -189,7 +189,7 @@ class Channel extends TeventDispatcher {
             channel: this.name,
             payload: {
                 type: type,
-                client: client.DBClient
+                client: client
             }
         };
         this.pubSubServer.broadcast(message);

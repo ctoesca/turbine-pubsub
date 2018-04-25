@@ -25,7 +25,7 @@ export declare class Channel extends TeventDispatcher {
     createSubscription(client: Client): Subscription;
     unsubscribeClient(client: Client): any;
     _removeSubscriptionById(id: string): any;
-    sendChannelEvent(client: Client, type: string): void;
+    sendChannelEvent(client: any, type: string): void;
     _onSubscriptionDestroy(e: Tevent): void;
     getSubscriptions(): any[];
     getSubscription(client: Client): any;

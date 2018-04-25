@@ -46,7 +46,7 @@ class PubSubServer extends turbine.services.TbaseService {
         this.cleanClusterClientsTimer.on(Ttimer.ON_TIMER, this.onCleanClusterClientsTimer, this);
         this.cleanClientsTimer.start();
         if (this.config.useSockjs) {
-            this.logger.info("USING SOCKJS");
+            this.logger.warn("USING SOCKJS");
             this.websocketServer = sockjs.createServer({
                 websocket: true,
                 log: this.onSockLog.bind(this)
@@ -75,6 +75,7 @@ class PubSubServer extends turbine.services.TbaseService {
         sub.on("message", this.onRedisPubSubMessage.bind(this));
         sub.subscribe("pub-sub-messages");
         sub.subscribe("direct-messages");
+        sub.subscribe("cluster-action");
         app.ClusterManager.on("ISMASTER_CHANGED", this.onIsMasterChanged, this);
     }
     stop() {
@@ -168,7 +169,7 @@ class PubSubServer extends turbine.services.TbaseService {
                 if (typeof connexion.lastActivityDate == "number")
                     diffSec = now - (connexion.lastActivityDate / 1000);
                 if ((diffSec === null) || (diffSec > this.config.clientCleanTimeout)) {
-                    this.logger.info("Suppression connexion dans REDIS: " + connId);
+                    this.logger.info("onCleanClusterClientsTimer: Suppression connexion dans REDIS: " + connId);
                     app.ClusterManager.getClient().hdel("clientsConnexions", connId);
                     inactiveConnexions[connId] = connexion;
                 }
@@ -178,28 +179,28 @@ class PubSubServer extends turbine.services.TbaseService {
             }
             return activeConnexions;
         }.bind(this))
-            .then(function (result) {
+            .then(function (activeConnexions) {
             this.logger.debug("activeConnexions ", activeConnexions);
             return app.ClusterManager.getClient().hgetall("subscriptions");
         }.bind(this))
-            .then(function (result) {
+            .then(function (subscriptions) {
             var r = {};
             var promises = [];
-            for (var key in result) {
-                var sub = result[key];
-                var item = JSON.parse(result[key]);
+            for (var key in subscriptions) {
+                var sub = subscriptions[key];
+                var item = JSON.parse(subscriptions[key]);
                 var channelName = item.channelName;
                 var messagesQueuesId = channelName + "_" + item.cid + "_messages_queue";
                 var connId = key.leftOf("_");
                 if (!connId)
                     this.logger.warn("connId non défini: key=" + key);
-                if (!connId || !activeConnexions[connId]) {
+                if (!activeConnexions[connId]) {
                     promises.push(app.ClusterManager.getClient().hdel("subscriptions", key));
-                    this.logger.debug("Suppression subscription dans REDIS: " + key);
+                    this.logger.info("onCleanClusterClientsTimer: Suppression subscription dans REDIS: " + key);
                     promises.push(app.ClusterManager.getClient().del(messagesQueuesId));
                     if (inactiveConnexions[connId]) {
                         var client = inactiveConnexions[connId].client;
-                        this.sendChannelEvent("unsubscribe", channelName, client);
+                        this.sendChannelEvent("unsubscribe", channelName, client.id);
                     }
                 }
                 else {
@@ -217,7 +218,7 @@ class PubSubServer extends turbine.services.TbaseService {
                 var key = results[i];
                 var messagesQueuesId = key.rightOf(app.ClusterManager.keyPrefix);
                 if (typeof activeMessagesQueues[messagesQueuesId] == "undefined") {
-                    this.logger.info("Suppression clef " + key);
+                    this.logger.debug("onCleanClusterClientsTimer: Suppression clef " + key);
                     promises.push(app.ClusterManager.getClient().del(messagesQueuesId));
                 }
             }
@@ -297,50 +298,53 @@ class PubSubServer extends turbine.services.TbaseService {
         this.logger.debug("Nombre de clients: " + (total - removed));
         return removed;
     }
-    getUserSession(sid) {
-        return app.ClusterManager.getClient().hget("session.ctop", sid).then(function (session) {
-            if (session)
-                return JSON.parse(session);
-            else
-                return null;
-        })
-            .catch(function (err) {
-            this.logger.error("getUserSession", err);
-            throw err;
-        }.bind(this));
-    }
-    onConnection(conn, req) {
-        var cookieHeader = null;
-        if (!this.config.useSockjs) {
-            cookieHeader = req.headers.cookie;
+    getUserSession(req) {
+        var r = null;
+        var cookies = this.getCookies(req);
+        if (cookies["ctop"]) {
+            return app.ClusterManager.getClient().hget("session.ctop", cookies["ctop"]).then(function (session) {
+                if (session)
+                    return JSON.parse(session);
+                else
+                    return null;
+            })
+                .catch(function (err) {
+                this.logger.error("getUserSession", err);
+                throw err;
+            }.bind(this));
         }
         else {
-            cookieHeader = conn._session.recv.ws._stream._readableState.pipes._driver._request.headers.cookie;
+            return Promise.resolve(null);
         }
+    }
+    getCookies(req) {
+        var cookies = {};
+        var cookieHeader = req.headers.cookie;
         if (cookieHeader) {
-            var cookies = {};
             cookieHeader.split(';').forEach(function (cookie) {
                 var parts = cookie.split('=');
                 cookies[parts.shift().trim()] = decodeURI(parts[0]);
             });
-            this.getUserSession(cookies["ctop"]).then(function (session) {
-                var username = null;
-                if ((session != null) && (session.user_name))
-                    username = session.user_name;
-                this.logger.info("Nouvelle connexion : session:", username);
-            }.bind(this), function (err) {
-                this.logger.error(err);
-            }.bind(this));
         }
-        if (!this.config.useSockjs)
-            conn.id = uuid.v4();
-        var client = new Client_1.Client(this, conn, { useSockjs: this.config.useSockjs });
-        this.clients[conn.id] = client;
-        client.on("CLOSE", this.onCloseClient.bind(this));
-        client.on("DESTROY", this.onDestroyClient.bind(this));
-        client.flatify().then(function (result) {
-            app.ClusterManager.getClient().hset("clientsConnexions", conn.id, JSON.stringify(result));
-        }.bind(this));
+        return cookies;
+    }
+    onConnection(conn, req) {
+        if (this.config.useSockjs)
+            req = conn._session.recv.ws._stream._readableState.pipes._driver._request;
+        this.getUserSession(req)
+            .then((session) => {
+            if (!this.config.useSockjs)
+                conn.id = uuid.v4();
+            var client = new Client_1.Client(this, conn, { useSockjs: this.config.useSockjs, session: session });
+            this.clients[conn.id] = client;
+            client.on("CLOSE", this.onCloseClient.bind(this));
+            client.on("DESTROY", this.onDestroyClient.bind(this));
+            client.flatify().then(function (result) {
+                app.ClusterManager.getClient().hset("clientsConnexions", conn.id, JSON.stringify(result));
+            }.bind(this));
+        }, (err) => {
+            this.logger.error(err);
+        });
     }
     onDestroyClient(e) {
         if (e.currentTarget.conn != null)
@@ -350,7 +354,7 @@ class PubSubServer extends turbine.services.TbaseService {
     }
     onCloseClient(e) {
         var id = e.currentTarget.id;
-        this.logger.debug("onCloseClient " + id);
+        this.logger.debug("onCloseClient " + e.data.connId);
         app.ClusterManager.getClient().hdel("clientsConnexions", e.data.connId);
     }
     getClientsById(id) {
@@ -374,12 +378,12 @@ class PubSubServer extends turbine.services.TbaseService {
             }
         return r;
     }
-    onRedisPubSubMessage(channel, data) {
+    onRedisPubSubMessage(redisChannel, data) {
         var data = JSON.parse(data);
-        if (channel == "pub-sub-messages") {
+        if (redisChannel == "pub-sub-messages") {
             this._channelsManager.broadcast(data);
         }
-        else if (channel == "direct-messages") {
+        else if (redisChannel == "direct-messages") {
             if (data.clientsId)
                 this.sendMessagesToLocalClients(data.clientsId, data.messages);
             else if (data.userNames)
@@ -387,8 +391,13 @@ class PubSubServer extends turbine.services.TbaseService {
             else
                 this.logger.error("onRedisPubSubMessage : direct-messages sans 'clientsId' ni 'userNames'");
         }
+        else if (redisChannel == "cluster-action") {
+            if (data.action == "disconnect-client") {
+                this.disconnectClient(data.params.clientId);
+            }
+        }
         else {
-            this.logger.error("onRedisPubSubMessage : channel '" + channel + "' is unknown");
+            this.logger.error("onRedisPubSubMessage : redisChannel '" + redisChannel + "' is unknown");
         }
     }
     broadcast(messages, exclude = null) {
@@ -448,15 +457,35 @@ class PubSubServer extends turbine.services.TbaseService {
     }
     disconnectClient(id) {
         var clients = this.getClientsById(id);
+        var r = [];
         for (var j = 0; j < clients.length; j++) {
             var client = clients[j];
+            r.push(client.id);
             client.disconnect();
         }
+        return r;
     }
     processBeforeRequest(req, res, next) {
         return true;
     }
     initRoutes() {
+        this.app.post('/disconnectClient', (req, res, next) => {
+            if (!this.processBeforeRequest(req, res, next))
+                return;
+            var params = req.body;
+            this.logger.info("API: disconnect client " + params.clientId);
+            var data = {
+                action: "disconnect-client",
+                params: {
+                    clientId: params.clientId
+                }
+            };
+            app.ClusterManager.getClient().publish("cluster-action", JSON.stringify(data));
+            res.status(200).send({
+                exitCode: 0,
+                message: "Accepted"
+            });
+        });
         this.app.post('/topics/sendMessageToUsers', (req, res, next) => {
             this.logger.debug("sendMessageToUsers");
             if (!this.processBeforeRequest(req, res, next))
