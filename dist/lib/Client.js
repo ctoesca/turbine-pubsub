@@ -139,6 +139,8 @@ class Client extends TeventDispatcher {
             console.log("onMessage: CLIENT IS DESTROYED !!");
             return;
         }
+        if (!this.DBClient)
+            this.logger.warn("onMessage: DBClient=null");
         this.touchClusterClient();
         message = JSON.parse(message);
         if (message.type == 'publish') {
