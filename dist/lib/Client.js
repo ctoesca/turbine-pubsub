@@ -326,6 +326,7 @@ class Client extends TeventDispatcher {
             Promise.all(promises)
                 .then(function (result) {
                 var cancelled = 0;
+                var accepted = 0;
                 for (var i = 0; i < args.channels.length; i++) {
                     let canSubscribe = result[i];
                     if (canSubscribe) {
@@ -334,6 +335,7 @@ class Client extends TeventDispatcher {
                         var sub = channel.subscribeClient(this, args.channels[i].notifySubscribeEvents);
                         sub = { channel: channel.name, id: sub.id, notifySubscribeEvents: sub.notifySubscribeEvents, pendingMessages: sub.getQueue().consume() };
                         subs.push(sub);
+                        accepted++;
                         this.logger.debug("user " + userName + " => SUBSCRIBE channel '" + channel.name + "'. notifySubscribeEvents=" + args.channels[i].notifySubscribeEvents);
                     }
                     else {
@@ -341,7 +343,7 @@ class Client extends TeventDispatcher {
                     }
                 }
                 success(subs);
-                this.logger.info("user " + userName + " => SUBSCRIBE =>> " + subs.length + " channel(s) - cancelled subscriptions: " + cancelled);
+                this.logger.info("user " + userName + " => SUBSCRIBE =>> " + subs.length + " channel(s) - rejected: " + cancelled + ", accepted: " + accepted);
             }.bind(this));
         }
     }
