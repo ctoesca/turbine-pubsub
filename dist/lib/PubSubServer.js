@@ -298,40 +298,10 @@ class PubSubServer extends turbine.services.TbaseService {
         this.logger.debug("Nombre de clients: " + (total - removed));
         return removed;
     }
-    getUserSession(req) {
-        var r = null;
-        var cookies = this.getCookies(req);
-        if (cookies["ctop"]) {
-            return app.ClusterManager.getClient().hget("session.ctop", cookies["ctop"]).then(function (session) {
-                if (session)
-                    return JSON.parse(session);
-                else
-                    return null;
-            })
-                .catch(function (err) {
-                this.logger.error("getUserSession", err);
-                throw err;
-            }.bind(this));
-        }
-        else {
-            return Promise.resolve(null);
-        }
-    }
-    getCookies(req) {
-        var cookies = {};
-        var cookieHeader = req.headers.cookie;
-        if (cookieHeader) {
-            cookieHeader.split(';').forEach(function (cookie) {
-                var parts = cookie.split('=');
-                cookies[parts.shift().trim()] = decodeURI(parts[0]);
-            });
-        }
-        return cookies;
-    }
     onConnection(conn, req) {
         if (this.config.useSockjs)
             req = conn._session.recv.ws._stream._readableState.pipes._driver._request;
-        this.getUserSession(req)
+        app.getUserSession(req)
             .then((session) => {
             if (!this.config.useSockjs)
                 conn.id = uuid.v4();

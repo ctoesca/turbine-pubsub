@@ -1,5 +1,3 @@
-/// <reference types="express" />
-/// <reference types="bluebird" />
 import * as turbine from "turbine";
 import Tevent = turbine.events.Tevent;
 import Ttimer = turbine.tools.Ttimer;
@@ -39,8 +37,6 @@ export declare class PubSubServer extends turbine.services.TbaseService {
     onCleanClientsTimer(evt: Tevent): void;
     eachClient(callback: any): void;
     removeClient(client: Client): number;
-    getUserSession(req: express.Request): Promise<{}>;
-    getCookies(req: express.Request): {};
     onConnection(conn: any, req: express.Request): void;
     onDestroyClient(e: Tevent): void;
     onCloseClient(e: Tevent): void;
