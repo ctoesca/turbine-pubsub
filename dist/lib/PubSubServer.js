@@ -24,7 +24,7 @@ class PubSubServer extends turbine.services.TbaseService {
         this.cleanClientsTimer = new Ttimer({ delay: this.config.clientCleanInterval * 1000 });
         this.cleanClusterClientsTimer = new Ttimer({ delay: this.config.clientCleanInterval * 1000 });
         this._channelsManager = new ChannelsManager_1.ChannelsManager(this);
-        this.logger.info("PubSubServer created active=" + this.active);
+        this.logger.info("PubSubServer created active=" + this.active + ", path=" + this.config.apiPath);
     }
     canSubscribe(client, channelName) {
         return Promise.resolve(true);
@@ -426,12 +426,14 @@ class PubSubServer extends turbine.services.TbaseService {
         }
     }
     disconnectClient(id) {
-        var clients = this.getClientsById(id);
         var r = [];
-        for (var j = 0; j < clients.length; j++) {
-            var client = clients[j];
-            r.push(client.id);
-            client.disconnect();
+        if (id != null) {
+            var clients = this.getClientsById(id);
+            for (var j = 0; j < clients.length; j++) {
+                var client = clients[j];
+                r.push(client.id);
+                client.disconnect();
+            }
         }
         return r;
     }
@@ -498,13 +500,25 @@ class PubSubServer extends turbine.services.TbaseService {
             res.status(200).send({});
         });
         this.app.get('/getJson', (req, res, next) => {
-            if (!req["session"]) {
-                return next(new Error('oh no'));
-            }
             if (!this.processBeforeRequest(req, res, next))
                 return;
-            this.flatify().then(function (result) {
-                res.status(200).send(result);
+            app.getUserSession(req)
+                .then((session) => {
+                if (!session) {
+                    return next(new Error('no session'));
+                }
+                else {
+                    this.flatify()
+                        .then((result) => {
+                        res.status(200).send({
+                            pubsubserver: result,
+                            session: session
+                        });
+                    });
+                }
+            })
+                .catch(err => {
+                return next(err);
             });
         });
         this.app.get('/getClusterConnexions', (req, res, next) => {

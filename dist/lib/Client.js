@@ -352,6 +352,10 @@ class Client extends TeventDispatcher {
             this.logger.info("authenticate user " + this.session.user_name);
         else
             this.logger.info("authenticate user sans session");
+        if (typeof args.clientId == "undefined") {
+            failure("authenticate: args.clientId est undefined");
+            return;
+        }
         app.ClusterManager.getClient().hget("clients", args.clientId, function (err, result) {
             if (err) {
                 this.logger.error(err);
