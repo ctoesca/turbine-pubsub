@@ -312,7 +312,8 @@ class PubSubServer extends turbine.services.TbaseService {
             client.flatify().then(function (result) {
                 app.ClusterManager.getClient().hset("clientsConnexions", conn.id, JSON.stringify(result));
             }.bind(this));
-        }, (err) => {
+        })
+            .catch(err => {
             this.logger.error(err);
         });
     }

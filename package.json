@@ -56,6 +56,6 @@
     "turbine": "git+https://github.com/ctoesca/turbine.git",
     "typescript": "^2.8.3",
     "uuid": "^3.2.1",
-    "ws": "^5.1.1"
+    "ws": "^6.0.0"
   }
 }
