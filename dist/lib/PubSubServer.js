@@ -4,6 +4,7 @@ const turbine = require("turbine");
 var Ttimer = turbine.tools.Ttimer;
 const ChannelsManager_1 = require("./ChannelsManager");
 const Client_1 = require("./Client");
+const PurgeService_1 = require("./PurgeService");
 const uuid = require("uuid");
 const ws = require("ws");
 const sockjs = require("sockjs");
@@ -21,9 +22,10 @@ class PubSubServer extends turbine.services.TbaseService {
             limit: '50mb'
         }));
         this.httpServer.use(this.config.apiPath, this.app);
-        this.cleanClientsTimer = new Ttimer({ delay: this.config.clientCleanInterval * 1000 });
-        this.cleanClusterClientsTimer = new Ttimer({ delay: this.config.clientCleanInterval * 1000 });
+        this.processTimer = new Ttimer({ delay: 60 * 1000 });
+        this.clusterTimer = new Ttimer({ delay: 60 * 1000 });
         this._channelsManager = new ChannelsManager_1.ChannelsManager(this);
+        this.purgeService = new PurgeService_1.PurgeService(this, this.config);
         this.logger.info("PubSubServer created active=" + this.active + ", path=" + this.config.apiPath);
     }
     canSubscribe(client, channelName) {
@@ -42,9 +44,9 @@ class PubSubServer extends turbine.services.TbaseService {
     }
     start() {
         super.start();
-        this.cleanClientsTimer.on(Ttimer.ON_TIMER, this.onCleanClientsTimer, this);
-        this.cleanClusterClientsTimer.on(Ttimer.ON_TIMER, this.onCleanClusterClientsTimer, this);
-        this.cleanClientsTimer.start();
+        this.processTimer.on(Ttimer.ON_TIMER, this.onProcessTimer, this);
+        this.clusterTimer.on(Ttimer.ON_TIMER, this.onClusterTimer, this);
+        this.processTimer.start();
         if (this.config.useSockjs) {
             this.logger.warn("USING SOCKJS");
             this.websocketServer = sockjs.createServer({
@@ -83,20 +85,20 @@ class PubSubServer extends turbine.services.TbaseService {
             c.free();
         });
         this._channelsManager.stop();
-        this.cleanClientsTimer.stop();
-        this.cleanClusterClientsTimer.stop();
+        this.processTimer.stop();
+        this.clusterTimer.stop();
         app.ClusterManager.off("ISMASTER_CHANGED", this.onIsMasterChanged);
-        this.cleanClientsTimer.off(Ttimer.ON_TIMER, this.onCleanClientsTimer);
-        this.cleanClusterClientsTimer.off(Ttimer.ON_TIMER, this.onCleanClusterClientsTimer);
+        this.processTimer.off(Ttimer.ON_TIMER, this.onProcessTimer);
+        this.clusterTimer.off(Ttimer.ON_TIMER, this.onClusterTimer);
     }
     onIsMasterChanged(e) {
         if (e.data) {
-            this.cleanClusterClientsTimer.start();
-            this.logger.info("cleanClusterClientsTimer démarré");
+            this.clusterTimer.start();
+            this.logger.info("clusterTimer démarré");
         }
         else {
-            this.cleanClusterClientsTimer.stop();
-            this.logger.info("cleanClusterClientsTimer arrêté");
+            this.clusterTimer.stop();
+            this.logger.info("clusterTimer arrêté");
         }
     }
     flatify() {
@@ -150,124 +152,38 @@ class PubSubServer extends turbine.services.TbaseService {
             type: 'channel_event',
             channel: channelName,
             payload: {
-                type: type,
-                client: DBClient
+                type: type
             }
         };
-        this.broadcast(message);
+        if (typeof DBClient == "object")
+            message.payload.client = DBClient;
+        else
+            message.payload.clientId = DBClient;
+        this.publish(message);
     }
-    onCleanClusterClientsTimer() {
+    onClusterTimer() {
         var activeConnexions = {};
         var inactiveConnexions = {};
         var activeMessagesQueues = {};
-        this.getClusterConnexions()
+        this.purgeService.purgeRedisClients()
+            .then(() => {
+            return this.purgeService.purgeRedisConnections();
+        })
+            .then(() => {
+            return this.purgeService.purgeRedisSubscriptions();
+        })
+            .then(() => {
+            return ChannelsManager_1.ChannelsManager.purgeChannelsInRedis();
+        })
             .then(function (result) {
-            var now = new Date().getTime() / 1000;
-            for (var connId in result) {
-                var connexion = result[connId];
-                var diffSec = null;
-                if (typeof connexion.lastActivityDate == "number")
-                    diffSec = now - (connexion.lastActivityDate / 1000);
-                if ((diffSec === null) || (diffSec > this.config.clientCleanTimeout)) {
-                    this.logger.info("onCleanClusterClientsTimer: Suppression connexion dans REDIS: " + connId);
-                    app.ClusterManager.getClient().hdel("clientsConnexions", connId);
-                    inactiveConnexions[connId] = connexion;
-                }
-                else {
-                    activeConnexions[connId] = connexion;
-                }
-            }
-            return activeConnexions;
-        }.bind(this))
-            .then(function (activeConnexions) {
-            this.logger.debug("activeConnexions ", activeConnexions);
-            return app.ClusterManager.getClient().hgetall("subscriptions");
-        }.bind(this))
-            .then(function (subscriptions) {
-            var r = {};
-            var promises = [];
-            for (var key in subscriptions) {
-                var sub = subscriptions[key];
-                var item = JSON.parse(subscriptions[key]);
-                var channelName = item.channelName;
-                var messagesQueuesId = channelName + "_" + item.cid + "_messages_queue";
-                var connId = key.leftOf("_");
-                if (!connId)
-                    this.logger.warn("connId non défini: key=" + key);
-                if (!activeConnexions[connId]) {
-                    promises.push(app.ClusterManager.getClient().hdel("subscriptions", key));
-                    this.logger.info("onCleanClusterClientsTimer: Suppression subscription dans REDIS: " + key);
-                    promises.push(app.ClusterManager.getClient().del(messagesQueuesId));
-                    if (inactiveConnexions[connId]) {
-                        var client = inactiveConnexions[connId].client;
-                        this.sendChannelEvent("unsubscribe", channelName, client.id);
-                    }
-                }
-                else {
-                    activeMessagesQueues[messagesQueuesId] = true;
-                }
-            }
-            return Promise.all(promises);
-        }.bind(this))
-            .then(function (deleteResult) {
-            return app.ClusterManager.getClient().keys(app.ClusterManager.keyPrefix + "*_messages_queue");
-        }.bind(this))
-            .then(function (results) {
-            var promises = [];
-            for (var i = 0; i < results.length; i++) {
-                var key = results[i];
-                var messagesQueuesId = key.rightOf(app.ClusterManager.keyPrefix);
-                if (typeof activeMessagesQueues[messagesQueuesId] == "undefined") {
-                    this.logger.debug("onCleanClusterClientsTimer: Suppression clef " + key);
-                    promises.push(app.ClusterManager.getClient().del(messagesQueuesId));
-                }
-            }
-            return Promise.all(promises);
-        }.bind(this))
-            .then(function (result) {
-            this.logger.info("Succès onCleanClusterClientsTimer");
+            this.logger.info("Succès purge cluster");
         }.bind(this))
             .catch(function (err) {
-            this.logger.error("onCleanClusterClientsTimer: ", err);
+            this.logger.error("onClusterTimer: ", err);
         }.bind(this));
     }
-    onCleanClientsTimer(evt) {
-        var now = new Date().getTime() / 1000;
-        var connectedClients = 0;
-        var toDelete = [];
-        for (var i in this.clients) {
-            var c = this.clients[i];
-            if (c == null) {
-                this.logger.warn(i + " => NULL client");
-                toDelete.push(i);
-            }
-            else {
-                if (c.conn == null) {
-                    this.logger.debug(i + " => client.conn = NULL, clientId=" + c.id);
-                    var diffSec = null;
-                    if (typeof c.lastActivityDate == "number")
-                        diffSec = now - (c.lastActivityDate / 1000);
-                    if ((diffSec === null) || (diffSec > this.config.clientCleanTimeout)) {
-                        c.free();
-                        toDelete.push(i);
-                    }
-                }
-                else {
-                    c.touchClusterClient();
-                    if (c.id) {
-                        this.logger.debug(i + " => client authenticated, clientId=" + c.id);
-                        connectedClients++;
-                    }
-                    else {
-                        this.logger.debug(i + " => client not authenticated");
-                    }
-                }
-            }
-        }
-        for (var j = 0; j < toDelete.length; j++) {
-            delete this.clients[toDelete[j]];
-        }
-        this.logger.info("Worker " + process.pid + ": Clients connected:" + connectedClients + ", supprimés:" + toDelete.length);
+    onProcessTimer(evt) {
+        this.purgeService.destroyOldClients();
     }
     eachClient(callback) {
         var clients = this.clients.sort(function (a, b) {
@@ -305,7 +221,11 @@ class PubSubServer extends turbine.services.TbaseService {
             .then((session) => {
             if (!this.config.useSockjs)
                 conn.id = uuid.v4();
-            var client = new Client_1.Client(this, conn, { useSockjs: this.config.useSockjs, session: session });
+            var client = new Client_1.Client(this, conn, {
+                useSockjs: this.config.useSockjs,
+                session: session,
+                req: req
+            });
             this.clients[conn.id] = client;
             client.on("CLOSE", this.onCloseClient.bind(this));
             client.on("DESTROY", this.onDestroyClient.bind(this));
@@ -371,9 +291,7 @@ class PubSubServer extends turbine.services.TbaseService {
             this.logger.error("onRedisPubSubMessage : redisChannel '" + redisChannel + "' is unknown");
         }
     }
-    broadcast(messages, exclude = null) {
-        if (typeof messages.push != "function")
-            messages = [messages];
+    publish(messages, exclude = null) {
         this._channelsManager.publish(messages);
     }
     sendToUsers(userNames, messages) {
@@ -484,7 +402,7 @@ class PubSubServer extends turbine.services.TbaseService {
             var messages = req.body;
             for (var i = 0; i < messages.length; i++)
                 messages[i].type = "publish";
-            this.broadcast(messages);
+            this.publish(messages);
             res.status(200).send(messages);
         });
         this.app.get('/check', (req, res, next) => {

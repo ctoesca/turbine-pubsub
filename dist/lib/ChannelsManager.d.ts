@@ -1,5 +1,6 @@
 import * as turbine from "turbine";
 import TeventDispatcher = turbine.events.TeventDispatcher;
+import Tevent = turbine.events.Tevent;
 import Promise = require("bluebird");
 import { PubSubServer } from './PubSubServer';
 export declare class ChannelsManager extends TeventDispatcher {
@@ -7,6 +8,8 @@ export declare class ChannelsManager extends TeventDispatcher {
     _channels: any;
     logger: any;
     constructor(pubSubServer: PubSubServer);
+    static purgeChannelsInRedis(): void;
+    private static purgeChannelInRedis;
     publish(messages: any): void;
     broadcast(messages: any): void;
     flatify(): Promise<{}>;
@@ -15,5 +18,6 @@ export declare class ChannelsManager extends TeventDispatcher {
     getChannelClients(channelName: string): Promise<{}>;
     getChannel(name: string, create?: boolean): any;
     createChannel(name: string): any;
+    onChannelDestroy(e: Tevent): void;
     free(): void;
 }

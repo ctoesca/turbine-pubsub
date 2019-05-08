@@ -3,7 +3,9 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const turbine = require("turbine");
 var TeventDispatcher = turbine.events.TeventDispatcher;
 var Tevent = turbine.events.Tevent;
+var tools = turbine.tools;
 const Promise = require("bluebird");
+const UAParser = require("ua-parser-js");
 class Client extends TeventDispatcher {
     constructor(server, conn, opt) {
         super();
@@ -13,6 +15,8 @@ class Client extends TeventDispatcher {
         this.useSockjs = false;
         this.conn = null;
         this.session = null;
+        this.userAgent = null;
+        this.closeDate = null;
         this._rpcMethods = {
             "getConnectedClients": true,
             "authenticate": true,
@@ -23,11 +27,8 @@ class Client extends TeventDispatcher {
         };
         if (typeof opt.useSockjs != "undefined")
             this.useSockjs = opt.useSockjs;
-        var username = null;
         if (typeof opt.session != "undefined") {
             this.session = opt.session;
-            if ((this.session != null) && (this.session.user_name))
-                username = this.session.user_name;
         }
         this.lastActivityDate = new Date().getTime();
         if (typeof Client.lastIntanceId == "undefined")
@@ -45,7 +46,31 @@ class Client extends TeventDispatcher {
         this.conn.on('error', (e) => {
             this.logger.debug("error " + e);
         });
-        this.logger.info("Client créé " + conn.id + ". username:" + username);
+        this.logger.info("Client créé. username: " + this.getUserName());
+        if (typeof opt.req == "object") {
+            this.ip = tools.getIpClient(opt.req);
+            this.logger.error(opt.req.connection);
+            if (opt.req.headers)
+                this.userAgent = new UAParser(opt.req.headers["user-agent"]).getResult();
+        }
+    }
+    getSessionId() {
+        var r = null;
+        if ((this.session != null) && (this.session.sid))
+            r = this.session.sid;
+        return r;
+    }
+    getUserName() {
+        var r = null;
+        if ((this.session != null) && (this.session.user_name))
+            r = this.session.user_name;
+        return r;
+    }
+    getUserId() {
+        var r = null;
+        if ((this.session != null) && (this.session.user_id))
+            r = this.session.user_id;
+        return r;
     }
     flatify() {
         return new Promise(function (resolve, reject) {
@@ -64,12 +89,6 @@ class Client extends TeventDispatcher {
         if (this.id != null) {
             r = this.id.substring(0, 10) + "...";
         }
-        return r;
-    }
-    getUserName() {
-        var r = null;
-        if (this.DBClient != null)
-            r = this.DBClient.userName;
         return r;
     }
     getConnId() {
@@ -108,10 +127,11 @@ class Client extends TeventDispatcher {
     }
     isConnected() {
         var r = (this.conn != null);
-        if (this.useSockjs)
-            return r;
-        else
-            return (r && (this.conn.readyState == this.conn.OPEN));
+        if (r) {
+            if (!this.useSockjs)
+                r = (this.conn.readyState == this.conn.OPEN);
+        }
+        return r;
     }
     sendMessageToWebsocket(msg) {
         this.touchClusterClient();
@@ -140,22 +160,24 @@ class Client extends TeventDispatcher {
             return;
         }
         if (!this.DBClient)
-            this.logger.warn("onMessage: DBClient=null");
+            this.logger.debug("onMessage: DBClient=null");
         this.touchClusterClient();
         message = JSON.parse(message);
         if (message.type == 'publish') {
             this.logger.debug("User " + this.getUserName() + ": publish message: type=", message.type + ", channel=" + message.channel);
             if (this.id != null) {
-                this.server.broadcast(message);
+                this.server.publish(message);
             }
             else {
-                this.logger.debug("clientId is NULL");
+                this.logger.warn("publish: clientId is NULL");
             }
         }
         else if (message.type == 'rpc') {
             var functionName = message.payload.functionName;
             this.logger.trace("Appel RPC: " + functionName);
             try {
+                if ((functionName != "authenticate") && !this.authenticated)
+                    throw "Error invoking '" + functionName + "': Not authenticated";
                 if (typeof this._rpcMethods[functionName] == "undefined")
                     throw "RPC method '" + functionName + "' does not exists";
                 if (typeof this[functionName] == "undefined")
@@ -199,20 +221,33 @@ class Client extends TeventDispatcher {
             return;
         }
         if (this.logger)
-            this.logger.debug("close " + this.id);
+            this.logger.info("close " + this.id);
         if (this.server && this.DBClient)
-            this.server.broadcast({ type: 'publish', channel: "system", payload: { type: "disconnected", client: this.getSafeDBClient() } });
-        var connId = this.conn.id;
+            this.server.publish({ type: 'publish', channel: "system", payload: { type: "disconnected", client: this.getSafeDBClient() } });
+        var connId = this.getConnId();
+        this.authenticated = false;
         this.conn = null;
+        this.closeDate = new Date().getTime();
+        this.saveClient();
         this.dispatchEvent(new Tevent("CLOSE", { connId: connId }));
     }
     free() {
-        this.logger.debug("Tclient.free clientId=" + this.getShortId());
         super.free();
-        this.conn = null;
-        this.server = null;
-        this.logger = null;
-        this.DBClient = null;
+        app.ClusterManager.getClient().hdel("clients", this.id)
+            .then(function (result) {
+            this.logger.info("Suppression client dans REDIS: " + this.id);
+        }.bind(this))
+            .catch(function (err) {
+            this.logger.error("Tclient.free id=" + this.id + " : " + err.toString());
+        }.bind(this))
+            .finally(function () {
+            this.conn = null;
+            this.server = null;
+            this.DBClient = null;
+            this.authenticated = false;
+            this.logger = null;
+            this.id = null;
+        }.bind(this));
     }
     returnRpcResult(payload, result) {
         this.sendMessage({
@@ -225,15 +260,19 @@ class Client extends TeventDispatcher {
             }
         });
     }
-    returnRpcFailure(payload, errorMessage) {
-        this.logger.warn("Echec appel RPC: " + payload.functionName + " => ", errorMessage);
-        if (typeof errorMessage == "object")
-            errorMessage = { message: errorMessage.toString() };
+    returnRpcFailure(payload, exception) {
+        this.logger.warn("Echec appel RPC: " + payload.functionName + " => ", exception);
+        if (typeof exception == "string")
+            exception = { message: exception };
+        else if (exception instanceof Error)
+            exception = { message: exception.toString() };
+        else
+            exception = { message: JSON.stringify(exception) };
         this.sendMessage({
             type: 'rpc_callback',
             payload: {
                 correlationId: payload.correlationId,
-                exception: errorMessage,
+                exception: exception,
                 functionName: payload.functionName
             }
         });
@@ -250,13 +289,12 @@ class Client extends TeventDispatcher {
         this.logger.info("getConnectedClients", args);
         return this.server.getClusterConnexions()
             .then(function (result) {
-            this.logger.error(result);
             var clientsHash = {};
             var r = [];
             for (var connId in result) {
                 var conn = result[connId];
                 if (conn.client) {
-                    clientsHash[conn.client.cid] = conn.client;
+                    clientsHash[conn.client.id] = conn.client;
                     conn.client.sessionId = undefined;
                     r.push(conn.client);
                 }
@@ -347,45 +385,60 @@ class Client extends TeventDispatcher {
             }.bind(this));
         }
     }
+    saveClient() {
+        if (!this.id)
+            return;
+        var newClient = {
+            "id": this.id,
+            "userAgent": this.userAgent,
+            "id_user": this.getUserId(),
+            "userName": this.getUserName(),
+            "ip": this.ip,
+            "sessionId": this.getSessionId(),
+            "connected": this.isConnected(),
+            "closeDate": this.closeDate
+        };
+        this.DBClient = newClient;
+        return app.ClusterManager.getClient().hset("clients", this.id, JSON.stringify(newClient))
+            .then(function (result) {
+            return newClient;
+        });
+    }
     authenticate(args, success, failure) {
-        if (this.session)
-            this.logger.info("authenticate user " + this.session.user_name);
-        else
-            this.logger.info("authenticate user sans session");
         if (typeof args.clientId == "undefined") {
             failure("authenticate: args.clientId est undefined");
             return;
         }
-        app.ClusterManager.getClient().hget("clients", args.clientId, function (err, result) {
-            if (err) {
+        if (this.authenticated) {
+            failure("Already authenticated");
+        }
+        else {
+            var oldClient = null;
+            app.ClusterManager.getClient().hget("clients", args.clientId)
+                .then(function (oldClient) {
+                if (oldClient !== null) {
+                    var oldClient = JSON.parse(oldClient);
+                    this.logger.debug("AUTH: oldClient=", oldClient);
+                }
+                this.id = args.clientId;
+                return this.saveClient();
+            }.bind(this))
+                .then(function (newClient) {
+                this.authenticated = true;
+                this.DBClient = newClient;
+                this.logger.info("authenticate: client " + this.id + ". userName=" + this.getUserName() + " (ID=" + this.getUserId() + ")");
+                var clientClone = this.getSafeDBClient();
+                success(clientClone);
+                this.server.publish({ type: 'publish', channel: "system", payload: { type: "connected", client: clientClone } });
+            }.bind(this))
+                .catch(function (err) {
+                this.authenticated = false;
+                this.DBClient = null;
+                this.id = null;
                 this.logger.error(err);
                 failure(err);
-            }
-            else {
-                this.id = args.clientId;
-                var client = JSON.parse(result);
-                if (client != null) {
-                    if ((this.session && ((client.sessionId && (client.sessionId != this.session.sid)) || (client.id_user != this.session.user_id)))) {
-                        failure("Le client " + args.clientId + " n'appartient pas à cette session");
-                    }
-                    else if (!this.session && client.sessionId) {
-                        failure("Le client " + args.clientId + " appartient à une session mais la connexion websocket n'est pas associée à une session");
-                    }
-                    else {
-                        this.DBClient = client;
-                        this.logger.info("authenticate: Client IP=" + this.ip + ", clientId=" + client.cid + ", userName=" + client.userName);
-                        var clientClone = this.getSafeDBClient();
-                        success(clientClone);
-                        this.server.broadcast({ type: 'publish', channel: "system", payload: { type: "connected", client: clientClone } });
-                    }
-                }
-                else {
-                    this.DBClient = null;
-                    failure("Le client '" + this.id + "' n'est pas enregistré");
-                }
-                this.touchClusterClient();
-            }
-        }.bind(this));
+            });
+        }
     }
 }
 Client.lastIntanceId = null;

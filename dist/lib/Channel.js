@@ -4,6 +4,7 @@ const turbine = require("turbine");
 var TeventDispatcher = turbine.events.TeventDispatcher;
 const Promise = require("bluebird");
 const Subscription_1 = require("./Subscription");
+var Ttimer = turbine.tools.Ttimer;
 class Channel extends TeventDispatcher {
     constructor(name, pubSubServer) {
         super();
@@ -14,6 +15,59 @@ class Channel extends TeventDispatcher {
         this.redisKey = "subscriptions";
         this.logger = app.getLogger("Channel");
         this.logger.debug("Channel created: " + name);
+        this.purgeTimer = new Ttimer({ delay: 600 * 1000 });
+        this.purgeTimer.on(Ttimer.ON_TIMER, this.onPurgeTimer, this);
+        this.purgeTimer.start();
+        this.addChannelInRedis();
+    }
+    static storeMessage(message) {
+        return new Promise(function (resolve, reject) {
+            var channelName = message.channel;
+            var key = "channels_messages_" + channelName;
+            app.ClusterManager.getClient().rpush(key, JSON.stringify(message), function (err, result) {
+                if (err) {
+                    reject(err);
+                    app.logger.debug("storeMessage.rpush: " + err.toString());
+                }
+                else {
+                    app.ClusterManager.getClient().llen(key, function (err, count) {
+                        if (err) {
+                            app.logger.debug("Channel '" + channelName + "': storeMessage.llen: " + err.toString());
+                            reject(err);
+                        }
+                        else {
+                            app.logger.debug("Channel '" + channelName + "': storeMessage.llen = " + count);
+                            if (count > this.maxStoredMessages) {
+                                app.ClusterManager.getClient().lpop(key, function (err, result) {
+                                    if (err) {
+                                        app.logger.error("storeMessage.lpop: " + err.toString());
+                                        reject(err);
+                                    }
+                                    else {
+                                        app.logger.debug("storeMessage.lpop: success");
+                                        resolve();
+                                    }
+                                }.bind(this));
+                            }
+                            else {
+                                resolve();
+                            }
+                        }
+                    }.bind(this));
+                }
+            }.bind(this));
+        }.bind(this));
+    }
+    onPurgeTimer(e) {
+        if (this.subscriptions.length == 0)
+            this.free();
+    }
+    addChannelInRedis() {
+        var data = JSON.stringify({
+            name: this.name,
+            maxStoredMessages: this.maxStoredMessages
+        });
+        app.ClusterManager.getClient().hset("channels", this.name, data);
     }
     stop() {
     }
@@ -67,43 +121,6 @@ class Channel extends TeventDispatcher {
             }.bind(this));
         }.bind(this));
     }
-    storeMessage(message) {
-        return new Promise(function (resolve, reject) {
-            var key = "channels_messages_" + this.name;
-            app.ClusterManager.getClient().rpush(key, JSON.stringify(message), function (err, result) {
-                if (err) {
-                    reject(err);
-                    this.logger.debug("storeMessage.rpush: " + err.toString());
-                }
-                else {
-                    app.ClusterManager.getClient().llen(key, function (err, count) {
-                        if (err) {
-                            this.logger.debug("Channel '" + this.name + "': storeMessage.llen: " + err.toString());
-                            reject(err);
-                        }
-                        else {
-                            this.logger.debug("Channel '" + this.name + "': storeMessage.llen = " + count);
-                            if (count > this.maxStoredMessages) {
-                                app.ClusterManager.getClient().lpop(key, function (err, result) {
-                                    if (err) {
-                                        this.logger.error("storeMessage.lpop: " + err.toString());
-                                        reject(err);
-                                    }
-                                    else {
-                                        this.logger.debug("storeMessage.lpop: success");
-                                        resolve();
-                                    }
-                                }.bind(this));
-                            }
-                            else {
-                                resolve();
-                            }
-                        }
-                    }.bind(this));
-                }
-            }.bind(this));
-        }.bind(this));
-    }
     broadcast(message, filter) {
         var count = 0;
         if (arguments.length > 1) {
@@ -129,14 +146,13 @@ class Channel extends TeventDispatcher {
         else {
             sub.setClient(client);
             sub.getQueue().getSize().then(function (result) {
-                this.logger.debug("subscribeClient: Réattachement du client au channel " + this.name + ". Messages dans la queue: " + result);
+                this.logger.info("subscribeClient: Réattachement du client au channel " + this.name + ". Messages dans la queue: " + result);
             }.bind(this));
         }
         var connId = client.getConnId();
         if (connId) {
             app.ClusterManager.getClient().hset(this.redisKey, connId + "_" + this.name, JSON.stringify({
                 channelName: this.name,
-                id: client.id,
                 cid: client.id,
                 connId: connId,
                 pid: process.pid,
@@ -150,7 +166,7 @@ class Channel extends TeventDispatcher {
         return sub;
     }
     createSubscription(client) {
-        var sub = new Subscription_1.Subscription(this.name, client);
+        var sub = new Subscription_1.Subscription(this, client);
         this.subscriptions.push(sub);
         sub.on("DESTROY", this._onSubscriptionDestroy, this);
         this.logger.trace("createSubscription sur channel " + this.name + ", client=" + client.id);
@@ -177,7 +193,7 @@ class Channel extends TeventDispatcher {
                 app.ClusterManager.getClient().hdel(this.redisKey, client.getConnId() + "_" + this.name);
                 this.sendChannelEvent(client.id, "unsubscribe");
                 this.subscriptions.splice(i, 1);
-                this.logger.debug("Channel.removeSubscription on channel " + this.name + ", client.id=" + client.id);
+                this.logger.error("Channel.removeSubscription on channel " + this.name + ", client.id=" + client.id);
                 break;
             }
         }
@@ -188,14 +204,27 @@ class Channel extends TeventDispatcher {
             type: 'channel_event',
             channel: this.name,
             payload: {
-                type: type,
-                client: client
+                type: type
             }
         };
-        this.pubSubServer.broadcast(message);
+        if (typeof client == "object")
+            message.payload.client = client;
+        else
+            message.payload.clientId = client;
+        this.pubSubServer.publish(message);
     }
     _onSubscriptionDestroy(e) {
         this._removeSubscriptionById(e.currentTarget.id);
+    }
+    getSubscriptionById(id) {
+        var r = null;
+        for (var i = 0; i < this.subscriptions.length; i++) {
+            if (this.subscriptions[i].id == id) {
+                r = this.subscriptions[i];
+                break;
+            }
+        }
+        return r;
     }
     getSubscriptions() {
         return this.subscriptions;
@@ -230,13 +259,17 @@ class Channel extends TeventDispatcher {
     free() {
         this.logger.debug("Channel.free: name=" + this.name);
         super.free();
-        for (var i = 0; i < this.subscriptions.length; i++) {
-            var sub = this.subscriptions[i];
-            app.ClusterManager.getClient().hdel(this.redisKey, sub.client.getConnId() + "_" + this.name);
-            sub.free();
-            this.subscriptions[i] = null;
+        if (this.subscriptions) {
+            for (var i = 0; i < this.subscriptions.length; i++) {
+                var sub = this.subscriptions[i];
+                sub.free();
+            }
+            this.subscriptions = null;
         }
-        this.subscriptions = null;
+        if (this.purgeTimer) {
+            this.purgeTimer.free();
+            this.purgeTimer = null;
+        }
         this.logger = null;
     }
 }

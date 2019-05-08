@@ -5,6 +5,7 @@ import Promise = require("bluebird");
 import { Subscription } from './Subscription';
 import { PubSubServer } from './PubSubServer';
 import { Client } from './Client';
+import Ttimer = turbine.tools.Ttimer;
 export declare class Channel extends TeventDispatcher {
     pubSubServer: PubSubServer;
     maxStoredMessages: number;
@@ -12,13 +13,16 @@ export declare class Channel extends TeventDispatcher {
     redisKey: string;
     subscriptions: any[];
     logger: any;
+    purgeTimer: Ttimer;
     constructor(name: string, pubSubServer: PubSubServer);
+    static storeMessage(message: any): Promise<{}>;
+    onPurgeTimer(e: any): void;
+    addChannelInRedis(): void;
     stop(): void;
     start(): void;
     getClients(): Promise<{}>;
     flatify(): Promise<{}>;
     getMessages(): Promise<{}>;
-    storeMessage(message: any): Promise<{}>;
     broadcast(message: any, filter: any): number;
     subscribeClient(client: Client, notifySubscribeEvents: any): any;
     createSubscription(client: Client): Subscription;
@@ -26,6 +30,7 @@ export declare class Channel extends TeventDispatcher {
     _removeSubscriptionById(id: string): any;
     sendChannelEvent(client: any, type: string): void;
     _onSubscriptionDestroy(e: Tevent): void;
+    getSubscriptionById(id: any): any;
     getSubscriptions(): any[];
     getSubscription(client: Client): any;
     sendMessages(messages: any): void;

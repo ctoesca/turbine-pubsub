@@ -5,14 +5,15 @@ var TeventDispatcher = turbine.events.TeventDispatcher;
 const Queue_js_1 = require("./Queue.js");
 const Promise = require("bluebird");
 class Subscription extends TeventDispatcher {
-    constructor(channelName, client) {
+    constructor(channel, client) {
         super();
         this.notifySubscribeEvents = false;
         this.channelName = null;
         this.noClientTimeout = 120000;
         this.clientDestroyTimestamp = null;
         this.setClient(client);
-        this.channelName = channelName;
+        this.channel = channel;
+        this.channelName = channel.name;
         this.id = this.channelName + "_" + this.client.getConnId();
         this._queue = new Queue_js_1.Queue(this);
         this.logger = app.getLogger("Subscription");
@@ -73,6 +74,7 @@ class Subscription extends TeventDispatcher {
         this.client.on("CLOSE", this._onClientClose, this);
     }
     _onClientClose(e) {
+        this.channel.sendChannelEvent(e.currentTarget.getSafeDBClient(), "disconnected");
         var redisKey = e.data.connId + "_" + this.channelName;
         app.ClusterManager.getClient().hget("subscriptions", redisKey)
             .then(result => {
@@ -93,16 +95,8 @@ class Subscription extends TeventDispatcher {
         });
     }
     _onClientDestroy(e) {
-        if (this.client)
-            this.client.offByCtx(this);
-        this.clientDestroyTimestamp = new Date().getTime();
-        setTimeout(function () {
-            if (this.clientDestroyTimestamp != null) {
-                var diff = new Date().getTime() - this.clientDestroyTimestamp;
-                if (diff >= this.noClientTimeout)
-                    this.free();
-            }
-        }.bind(this), this.noClientTimeout);
+        this.logger.info("subscription._onClientDestroy: DESTROY subscription " + this.channelName + " (cid=" + this.client.id + ")");
+        this.free();
     }
     free() {
         if (this.client)
@@ -114,7 +108,8 @@ class Subscription extends TeventDispatcher {
             this.client.offByCtx(this);
         this.client = null;
         this.logger = null;
-        this._queue.free();
+        if (this._queue)
+            this._queue.free();
         this._queue = null;
     }
 }

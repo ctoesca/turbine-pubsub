@@ -11,15 +11,54 @@ class ChannelsManager extends TeventDispatcher {
         this.pubSubServer = pubSubServer;
         this.logger = app.getLogger("ChannelsManager");
     }
+    static purgeChannelsInRedis() {
+        app.ClusterManager.getClient().hgetall("subscriptions")
+            .then(function (subscriptions) {
+            var channelsWithSubscriptions = {};
+            for (var key in subscriptions) {
+                var sub = JSON.parse(subscriptions[key]);
+                channelsWithSubscriptions[sub.channelName] = true;
+            }
+            return app.ClusterManager.getClient().hgetall("channels")
+                .then(function (channels) {
+                for (var channelName in channels) {
+                    if (typeof channelsWithSubscriptions[channelName] == "undefined") {
+                        ChannelsManager.purgeChannelInRedis(channelName);
+                    }
+                }
+            }.bind(this));
+        });
+    }
+    static purgeChannelInRedis(channelName) {
+        return app.ClusterManager.getClient().lrange("channels_messages_" + channelName, -1, -1)
+            .then(function (results) {
+            var toDelete = false;
+            if (results.length > 0) {
+                var lastMessage = JSON.parse(results[0]);
+                var now = new Date();
+                var diffSec = (now.getTime() - lastMessage.timestamp) / 1000;
+                if (diffSec > 3600) {
+                    toDelete = true;
+                }
+            }
+            else {
+                toDelete = true;
+            }
+            if (toDelete) {
+                app.logger.info("SUPPRESSION CHANNEL " + channelName + " dans REDIS");
+                app.ClusterManager.getClient().hdel("channels", channelName);
+                app.ClusterManager.getClient().del("channels_messages_" + channelName);
+            }
+        }.bind(this));
+    }
     publish(messages) {
+        if (typeof messages.push != "function")
+            messages = [messages];
         for (var i = 0; i < messages.length; i++) {
             var message = messages[i];
-            var channel = this.getChannel(message.channel, true);
-            if (channel != null) {
-                message.timestamp = new Date().getTime();
-                if (message.opt && message.opt.persist)
-                    channel.storeMessage(message);
-            }
+            message.timestamp = new Date().getTime();
+            if (message.opt && message.opt.persist)
+                Channel_1.Channel.storeMessage(message);
         }
         app.ClusterManager.getClient().publish("pub-sub-messages", JSON.stringify(messages));
     }
@@ -27,11 +66,11 @@ class ChannelsManager extends TeventDispatcher {
         var count = 0;
         for (var i = 0; i < messages.length; i++) {
             var message = messages[i];
-            var channel = this.getChannel(message.channel, true);
+            var channel = this.getChannel(message.channel, false);
             if (channel != null)
                 count += channel.broadcast(message);
             else
-                this.logger.warn("broadcast to channel " + message.channel + ": channel is null");
+                this.logger.debug("ChannelManager.broadcast: channel is null", channel);
         }
     }
     flatify() {
@@ -58,28 +97,47 @@ class ChannelsManager extends TeventDispatcher {
         }
     }
     getChannelClients(channelName) {
-        return new Promise(function (resolve, reject) {
-            app.ClusterManager.getClient().hgetall("subscriptions", function (err, result) {
-                var r = [];
-                for (var key in result) {
-                    var item = JSON.parse(result[key]);
-                    var connId = key.leftOf("_");
-                    var name = key.rightOf("_");
-                    if (!connId)
-                        this.logger.warn("connId non défini: key=" + key);
-                    if (name === channelName) {
-                        r.push(item);
+        return app.ClusterManager.getClient().hgetall("subscriptions")
+            .then(function (result) {
+            var cidList = [];
+            var cidHash = {};
+            for (var key in result) {
+                var subscription = JSON.parse(result[key]);
+                if (channelName === subscription.channelName) {
+                    if (!cidHash[subscription.cid]) {
+                        cidList.push(subscription.cid);
+                        cidHash[subscription.cid] = true;
                     }
                 }
-                resolve(r);
-            }.bind(this));
+            }
+            if (cidList.length > 0)
+                return app.ClusterManager.getClient().hmget("clients", cidList);
+            else
+                return [];
+        }.bind(this))
+            .then(function (clients) {
+            var r = [];
+            this.logger.error(clients);
+            for (var client of clients) {
+                if (client != null) {
+                    var client = JSON.parse(client);
+                    client = {
+                        id: client.id,
+                        id_user: client.id_user,
+                        userName: client.userName,
+                        connected: client.connected
+                    };
+                    r.push(client);
+                }
+            }
+            return r;
         }.bind(this));
     }
     getChannel(name, create = false) {
         var r = null;
         if (typeof this._channels[name] != "undefined")
             r = this._channels[name];
-        else if ((r == null) && (arguments.length == 2) && (create === true))
+        else if ((arguments.length == 2) && (create === true))
             r = this.createChannel(name);
         return r;
     }
@@ -87,7 +145,12 @@ class ChannelsManager extends TeventDispatcher {
         if (this.getChannel(name) != null)
             throw "Channel " + name + " already exists";
         this._channels[name] = new Channel_1.Channel(name, this.pubSubServer);
+        this._channels[name].on("DESTROY", this.onChannelDestroy.bind(this));
         return this._channels[name];
+    }
+    onChannelDestroy(e) {
+        var channel = e.currentTarget;
+        delete this._channels[channel.name];
     }
     free() {
         this.logger.debug("ChannelsManager.free");

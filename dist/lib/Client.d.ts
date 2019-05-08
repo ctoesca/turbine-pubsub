@@ -14,11 +14,16 @@ export declare class Client extends TeventDispatcher {
     server: PubSubServer;
     static lastIntanceId: any;
     session: any;
+    authenticated: false;
+    userAgent: any;
+    closeDate: number;
     _rpcMethods: any;
     constructor(server: PubSubServer, conn: any, opt: any);
+    getSessionId(): any;
+    getUserName(): any;
+    getUserId(): any;
     flatify(): Promise<{}>;
     getShortId(): any;
-    getUserName(): any;
     getConnId(): any;
     sendMessage(message: any): number;
     sendMessages(messages: any): number;
@@ -30,12 +35,13 @@ export declare class Client extends TeventDispatcher {
     onClose(data: any): void;
     free(): void;
     returnRpcResult(payload: any, result: any): void;
-    returnRpcFailure(payload: any, errorMessage: any): void;
+    returnRpcFailure(payload: any, exception: any): void;
     touchClusterClient(): void;
     getConnectedClients(args: any, success: any, failure: any): Promise<{}>;
     getChannelMessages(args: any, success: any, failure: any): void;
     getChannelClients(args: any, success: any, failure: any): void;
     unsubscribe(args: any, success: any, failure: any): void;
     subscribe(args: any, success: any, failure: any): void;
+    private saveClient;
     authenticate(args: any, success: any, failure: any): void;
 }

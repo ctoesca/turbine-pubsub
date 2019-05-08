@@ -1,6 +1,7 @@
 import * as turbine from "turbine";
 import TeventDispatcher = turbine.events.TeventDispatcher;
 import Tevent = turbine.events.Tevent;
+import { Channel } from './Channel';
 import { Client } from './Client';
 import { Queue } from './Queue.js';
 import Promise = require("bluebird");
@@ -13,7 +14,8 @@ export declare class Subscription extends TeventDispatcher {
     noClientTimeout: number;
     clientDestroyTimestamp: number;
     client: Client;
-    constructor(channelName: string, client: Client);
+    channel: Channel;
+    constructor(channel: Channel, client: Client);
     toJson(): string;
     fromJson(json: string): any;
     flatify(): Promise<{}>;
