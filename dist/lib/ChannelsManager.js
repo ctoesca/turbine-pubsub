@@ -98,7 +98,7 @@ class ChannelsManager extends TeventDispatcher {
     }
     getChannelClients(channelName) {
         return app.ClusterManager.getClient().hgetall("subscriptions")
-            .then(function (result) {
+            .then((result) => {
             var cidList = [];
             var cidHash = {};
             for (var key in result) {
@@ -114,10 +114,9 @@ class ChannelsManager extends TeventDispatcher {
                 return app.ClusterManager.getClient().hmget("clients", cidList);
             else
                 return [];
-        }.bind(this))
-            .then(function (clients) {
+        })
+            .then((clients) => {
             var r = [];
-            this.logger.error(clients);
             for (var client of clients) {
                 if (client != null) {
                     var client = JSON.parse(client);
@@ -131,7 +130,7 @@ class ChannelsManager extends TeventDispatcher {
                 }
             }
             return r;
-        }.bind(this));
+        });
     }
     getChannel(name, create = false) {
         var r = null;

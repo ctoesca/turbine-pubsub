@@ -105,20 +105,19 @@ class Channel extends TeventDispatcher {
     getMessages() {
         return new Promise(function (resolve, reject) {
             var key = "channels_messages_" + this.name;
-            app.ClusterManager.getClient().lrange(key, 0, -1, function (err, result) {
-                if (err) {
-                    this.logger.error("channel.getMessages(): " + err.toString());
-                    reject(err);
+            app.ClusterManager.getClient().lrange(key, 0, -1)
+                .then((result) => {
+                var r = [];
+                if (result != null) {
+                    for (var i = 0; i < result.length; i++)
+                        r.push(JSON.parse(result[i]));
                 }
-                else {
-                    var r = [];
-                    if (result != null) {
-                        for (var i = 0; i < result.length; i++)
-                            r.push(JSON.parse(result[i]));
-                    }
-                    resolve(r);
-                }
-            }.bind(this));
+                resolve(r);
+            })
+                .catch((err) => {
+                this.logger.error("channel.getMessages(): " + err.toString());
+                reject(err);
+            });
         }.bind(this));
     }
     broadcast(message, filter) {
@@ -141,12 +140,12 @@ class Channel extends TeventDispatcher {
         var sub = this.getSubscription(client);
         if (sub == null) {
             sub = this.createSubscription(client);
-            this.logger.debug("Création Subscription sur le channel " + this.name + " pour le client " + client.id);
+            this.logger.debug("Création Subscription sur le channel " + this.name + " pour le client " + client.getShortId());
         }
         else {
             sub.setClient(client);
             sub.getQueue().getSize().then(function (result) {
-                this.logger.info("subscribeClient: Réattachement du client au channel " + this.name + ". Messages dans la queue: " + result);
+                this.logger.debug("subscribeClient: Réattachement du client au channel " + this.name + ". Messages dans la queue: " + result);
             }.bind(this));
         }
         var connId = client.getConnId();
@@ -169,7 +168,7 @@ class Channel extends TeventDispatcher {
         var sub = new Subscription_1.Subscription(this, client);
         this.subscriptions.push(sub);
         sub.on("DESTROY", this._onSubscriptionDestroy, this);
-        this.logger.trace("createSubscription sur channel " + this.name + ", client=" + client.id);
+        this.logger.trace("createSubscription sur channel " + this.name + ", client=" + client.getShortId());
         return sub;
     }
     unsubscribeClient(client) {
@@ -177,7 +176,7 @@ class Channel extends TeventDispatcher {
         for (var i = 0; i < this.subscriptions.length; i++) {
             var sub = this.subscriptions[i];
             if (sub.getClient().instanceId === client.instanceId) {
-                this.logger.debug("Channel.unsubscribeClient client.id=" + client.id + ", sub.id=" + sub.id);
+                this.logger.debug("Channel.unsubscribeClient client.id=" + client.getShortId() + ", sub.id=" + sub.id);
                 r = sub;
                 sub.free();
                 break;
@@ -193,7 +192,7 @@ class Channel extends TeventDispatcher {
                 app.ClusterManager.getClient().hdel(this.redisKey, client.getConnId() + "_" + this.name);
                 this.sendChannelEvent(client.id, "unsubscribe");
                 this.subscriptions.splice(i, 1);
-                this.logger.error("Channel.removeSubscription on channel " + this.name + ", client.id=" + client.id);
+                this.logger.debug("Channel.removeSubscription on channel " + this.name + " (cid=" + client.getShortId() + ")");
                 break;
             }
         }

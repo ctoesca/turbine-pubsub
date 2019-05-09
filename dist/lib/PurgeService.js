@@ -2,12 +2,12 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 const Promise = require("bluebird");
 class PurgeService {
-    constructor(pubsubServer, config) {
+    constructor(pubsubServer, config = null) {
         this.pubsubServer = null;
         this.logger = null;
         this.config = null;
         this.pubsubServer = pubsubServer;
-        if (arguments.length >= 2)
+        if (config == null)
             this.config = this.getDefaultConfig();
         else
             this.config = config;
@@ -16,8 +16,9 @@ class PurgeService {
     }
     getDefaultConfig() {
         return {
-            "clientCleanInterval": 60,
-            "clientCleanTimeout": 600
+            "redisConnexionsTimeout": 600,
+            "redisClientsTimeout": 600,
+            "destroyClientsTimeout": 120
         };
     }
     purgeRedisConnections() {
@@ -36,7 +37,7 @@ class PurgeService {
                 var diffSec = null;
                 if (typeof connexion.lastActivityDate == "number")
                     diffSec = now - (connexion.lastActivityDate / 1000);
-                if ((diffSec === null) || (diffSec > this.config.clientCleanTimeout)) {
+                if ((diffSec === null) || (diffSec > this.config.redisConnexionsTimeout)) {
                     inactiveConnexions[connId] = connexion;
                     connToDelete.push(connId);
                 }
@@ -61,7 +62,8 @@ class PurgeService {
         })
             .then((subscriptions) => {
             var r = {};
-            var promises = [];
+            var subscriptionsToDelete = [];
+            var messagesQueuesToDelete = [];
             for (var key in subscriptions) {
                 var sub = JSON.parse(subscriptions[key]);
                 var channelName = sub.channelName;
@@ -70,9 +72,8 @@ class PurgeService {
                 if (!connId)
                     this.logger.warn("connId non défini: key=" + key);
                 if (!activeConnexions[connId]) {
-                    promises.push(app.ClusterManager.getClient().hdel("subscriptions", key));
-                    this.logger.info("Suppression subscription dans REDIS: " + key);
-                    promises.push(app.ClusterManager.getClient().del(messagesQueuesId));
+                    subscriptionsToDelete.push(key);
+                    messagesQueuesToDelete.push(messagesQueuesId);
                     if (inactiveConnexions[connId]) {
                         var client = inactiveConnexions[connId].client;
                         this.pubsubServer.sendChannelEvent("unsubscribe", channelName, client.id);
@@ -82,34 +83,51 @@ class PurgeService {
                     activeMessagesQueues[messagesQueuesId] = true;
                 }
             }
+            var promises = [];
+            if (subscriptionsToDelete.length > 0) {
+                this.logger.info("Suppression de " + subscriptionsToDelete.length + " subscription(s) dans REDIS");
+                promises.push(app.ClusterManager.getClient().hdel("subscriptions", subscriptionsToDelete));
+            }
+            if (messagesQueuesToDelete.length > 0) {
+                this.logger.info("Suppression de " + messagesQueuesToDelete.length + " message_queues dans REDIS");
+                promises.push(app.ClusterManager.getClient().del(messagesQueuesToDelete));
+            }
             return Promise.all(promises);
         })
             .then((deleteResult) => {
             return app.ClusterManager.getClient().keys(app.ClusterManager.keyPrefix + "*_messages_queue");
         })
             .then((results) => {
-            var promises = [];
+            var messagesQueuesToDelete = [];
             for (var i = 0; i < results.length; i++) {
                 var key = results[i];
                 var messagesQueuesId = key.rightOf(app.ClusterManager.keyPrefix);
                 if (typeof activeMessagesQueues[messagesQueuesId] == "undefined") {
-                    this.logger.info("Suppression message queue " + key);
-                    promises.push(app.ClusterManager.getClient().del(messagesQueuesId));
+                    messagesQueuesToDelete.push(messagesQueuesId);
                 }
             }
-            return Promise.all(promises);
+            if (messagesQueuesToDelete.length > 0) {
+                this.logger.info("Suppression de " + messagesQueuesToDelete.length + " message_queues dans REDIS");
+                return app.ClusterManager.getClient().del(messagesQueuesId);
+            }
+            else {
+                return Promise.resolve();
+            }
         });
     }
     purgeRedisClients() {
         this.logger.debug("purgeRedisClients");
         var now = Math.round(new Date().getTime() / 1000);
-        var from = now - this.config.clientsTimeout;
+        var from = now - this.config.redisClientsTimeout;
         return app.ClusterManager.getClient().hgetall("clients")
             .then(result => {
             let clientsId = [];
             for (var k in result) {
                 var client = JSON.parse(result[k]);
-                if (client.last_use < from) {
+                if (typeof client.last_use == "undefined") {
+                    this.logger.warn("purgeRedisClients: client.last_use non défini");
+                }
+                else if (client.last_use < from) {
                     this.logger.info("Supression client " + k + " dans REDIS");
                     clientsId.push(client.id);
                 }
@@ -135,9 +153,9 @@ class PurgeService {
             }
             else {
                 if ((c.conn == null) && c.closeDate) {
-                    this.logger.debug(i + " => client.conn = NULL, clientId=" + c.id);
+                    this.logger.debug(i + " => client.conn = NULL, clientId=" + c.getShortId());
                     var diffSec = now - (c.closeDate / 1000);
-                    if (diffSec > this.config.clientCleanTimeout) {
+                    if (diffSec > this.config.destroyClientsTimeout) {
                         c.free();
                         toDelete.push(i);
                     }
@@ -145,7 +163,7 @@ class PurgeService {
                 else {
                     c.touchClusterClient();
                     if (c.id) {
-                        this.logger.debug(i + " => client authenticated, clientId=" + c.id);
+                        this.logger.debug(i + " => client authenticated, clientId=" + c.getShortId());
                         connectedClients++;
                     }
                     else {

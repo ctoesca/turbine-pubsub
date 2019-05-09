@@ -17,6 +17,7 @@ class Client extends TeventDispatcher {
         this.session = null;
         this.userAgent = null;
         this.closeDate = null;
+        this.creationDate = null;
         this._rpcMethods = {
             "getConnectedClients": true,
             "authenticate": true,
@@ -30,7 +31,8 @@ class Client extends TeventDispatcher {
         if (typeof opt.session != "undefined") {
             this.session = opt.session;
         }
-        this.lastActivityDate = new Date().getTime();
+        this.creationDate = new Date().getTime();
+        this.lastActivityDate = this.creationDate;
         if (typeof Client.lastIntanceId == "undefined")
             Client.lastIntanceId = 0;
         Client.lastIntanceId++;
@@ -49,7 +51,6 @@ class Client extends TeventDispatcher {
         this.logger.info("Client créé. username: " + this.getUserName());
         if (typeof opt.req == "object") {
             this.ip = tools.getIpClient(opt.req);
-            this.logger.error(opt.req.connection);
             if (opt.req.headers)
                 this.userAgent = new UAParser(opt.req.headers["user-agent"]).getResult();
         }
@@ -221,7 +222,7 @@ class Client extends TeventDispatcher {
             return;
         }
         if (this.logger)
-            this.logger.info("close " + this.id);
+            this.logger.info("close connection username=" + this.getUserName() + ", cid=" + this.getShortId());
         if (this.server && this.DBClient)
             this.server.publish({ type: 'publish', channel: "system", payload: { type: "disconnected", client: this.getSafeDBClient() } });
         var connId = this.getConnId();
@@ -234,20 +235,20 @@ class Client extends TeventDispatcher {
     free() {
         super.free();
         app.ClusterManager.getClient().hdel("clients", this.id)
-            .then(function (result) {
-            this.logger.info("Suppression client dans REDIS: " + this.id);
-        }.bind(this))
-            .catch(function (err) {
-            this.logger.error("Tclient.free id=" + this.id + " : " + err.toString());
-        }.bind(this))
-            .finally(function () {
+            .then((result) => {
+            this.logger.info("Destroy client " + this.getShortId() + ": suppression dans REDIS");
+        })
+            .catch((err) => {
+            this.logger.error("Tclient.free id=" + this.getShortId() + " : " + err.toString());
+        })
+            .finally(() => {
             this.conn = null;
             this.server = null;
             this.DBClient = null;
             this.authenticated = false;
             this.logger = null;
             this.id = null;
-        }.bind(this));
+        });
     }
     returnRpcResult(payload, result) {
         this.sendMessage({
@@ -288,7 +289,7 @@ class Client extends TeventDispatcher {
     getConnectedClients(args, success, failure) {
         this.logger.info("getConnectedClients", args);
         return this.server.getClusterConnexions()
-            .then(function (result) {
+            .then((result) => {
             var clientsHash = {};
             var r = [];
             for (var connId in result) {
@@ -301,11 +302,11 @@ class Client extends TeventDispatcher {
             }
             success(r);
             return r;
-        }.bind(this))
-            .catch(function (err) {
+        })
+            .catch((err) => {
             this.logger.error("getConnectedClients", err);
             failure(err);
-        }.bind(this));
+        });
     }
     getChannelMessages(args, success, failure) {
         var channelsManager = this.server.getChannelsManager();
@@ -323,14 +324,15 @@ class Client extends TeventDispatcher {
     }
     getChannelClients(args, success, failure) {
         this.server.getChannelsManager().getChannelClients(args.channel)
-            .then(function (result) {
+            .then((result) => {
             if (success)
                 success(result);
-        }.bind(this), function (err) {
+        })
+            .catch((err) => {
             this.logger.warn("getChannelClients: " + err.toString());
             if (failure)
                 failure(err);
-        }.bind(this));
+        });
     }
     unsubscribe(args, success, failure) {
         var userName = this.getUserName();
@@ -396,7 +398,8 @@ class Client extends TeventDispatcher {
             "ip": this.ip,
             "sessionId": this.getSessionId(),
             "connected": this.isConnected(),
-            "closeDate": this.closeDate
+            "closeDate": this.closeDate,
+            "creationDate": this.creationDate
         };
         this.DBClient = newClient;
         return app.ClusterManager.getClient().hset("clients", this.id, JSON.stringify(newClient))
@@ -426,7 +429,7 @@ class Client extends TeventDispatcher {
                 .then(function (newClient) {
                 this.authenticated = true;
                 this.DBClient = newClient;
-                this.logger.info("authenticate: client " + this.id + ". userName=" + this.getUserName() + " (ID=" + this.getUserId() + ")");
+                this.logger.info("authenticate: client " + this.getShortId() + ". userName=" + this.getUserName() + " (ID=" + this.getUserId() + ")");
                 var clientClone = this.getSafeDBClient();
                 success(clientClone);
                 this.server.publish({ type: 'publish', channel: "system", payload: { type: "connected", client: clientClone } });

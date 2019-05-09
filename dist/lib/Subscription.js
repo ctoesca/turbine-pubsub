@@ -95,14 +95,11 @@ class Subscription extends TeventDispatcher {
         });
     }
     _onClientDestroy(e) {
-        this.logger.info("subscription._onClientDestroy: DESTROY subscription " + this.channelName + " (cid=" + this.client.id + ")");
+        this.logger.debug("subscription._onClientDestroy: DESTROY subscription " + this.channelName + " (cid=" + this.client.getShortId() + ")");
         this.free();
     }
     free() {
-        if (this.client)
-            this.logger.debug("Subscription.free: channelName=" + this.channelName + ", client=" + this.client.id);
-        else
-            this.logger.debug("Subscription.free: channelName=" + this.channelName + ", client=null");
+        this.logger.debug("Destroy subscription " + this.id);
         super.free();
         if (this.client)
             this.client.offByCtx(this);

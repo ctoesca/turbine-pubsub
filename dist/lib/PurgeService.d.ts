@@ -5,13 +5,14 @@ export declare class PurgeService {
     pubsubServer: PubSubServer;
     logger: Logger;
     config: any;
-    constructor(pubsubServer: any, config: any);
+    constructor(pubsubServer: any, config?: any);
     getDefaultConfig(): {
-        "clientCleanInterval": number;
-        "clientCleanTimeout": number;
+        "redisConnexionsTimeout": number;
+        "redisClientsTimeout": number;
+        "destroyClientsTimeout": number;
     };
     purgeRedisConnections(): Promise<void>;
-    purgeRedisSubscriptions(): Promise<any[]>;
+    purgeRedisSubscriptions(): Promise<any>;
     purgeRedisClients(): any;
     destroyOldClients(): Promise<void>;
 }

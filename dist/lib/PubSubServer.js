@@ -25,7 +25,7 @@ class PubSubServer extends turbine.services.TbaseService {
         this.processTimer = new Ttimer({ delay: 60 * 1000 });
         this.clusterTimer = new Ttimer({ delay: 60 * 1000 });
         this._channelsManager = new ChannelsManager_1.ChannelsManager(this);
-        this.purgeService = new PurgeService_1.PurgeService(this, this.config);
+        this.purgeService = new PurgeService_1.PurgeService(this);
         this.logger.info("PubSubServer created active=" + this.active + ", path=" + this.config.apiPath);
     }
     canSubscribe(client, channelName) {
@@ -37,9 +37,7 @@ class PubSubServer extends turbine.services.TbaseService {
             "apiPath": "/api",
             "prefix": "/websocket",
             "executionPolicy": "one_per_process",
-            "useSockjs": false,
-            "clientCleanInterval": 60,
-            "clientCleanTimeout": 600
+            "useSockjs": false
         };
     }
     start() {
@@ -176,7 +174,7 @@ class PubSubServer extends turbine.services.TbaseService {
             return ChannelsManager_1.ChannelsManager.purgeChannelsInRedis();
         })
             .then(function (result) {
-            this.logger.info("Succès purge cluster");
+            this.logger.debug("Succès purge cluster");
         }.bind(this))
             .catch(function (err) {
             this.logger.error("onClusterTimer: ", err);

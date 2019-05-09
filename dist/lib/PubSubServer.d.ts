@@ -24,8 +24,6 @@ export declare class PubSubServer extends turbine.services.TbaseService {
         "prefix": string;
         "executionPolicy": string;
         "useSockjs": boolean;
-        "clientCleanInterval": number;
-        "clientCleanTimeout": number;
     };
     start(): void;
     stop(): void;
