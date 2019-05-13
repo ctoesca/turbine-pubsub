@@ -81,8 +81,8 @@ class Channel extends TeventDispatcher {
                     var channelName = key.rightOf("_");
                     if (channelName == this.name) {
                         var item = JSON.parse(result[key]);
-                        var connId = item.connId;
-                        r[connId] = item;
+                        var cid = item.cid;
+                        r[cid] = item;
                     }
                 }
                 resolve(r);
@@ -141,27 +141,21 @@ class Channel extends TeventDispatcher {
         if (sub == null) {
             sub = this.createSubscription(client);
             this.logger.debug("Création Subscription sur le channel " + this.name + " pour le client " + client.getShortId());
-        }
-        else {
-            sub.setClient(client);
-            sub.getQueue().getSize().then(function (result) {
-                this.logger.debug("subscribeClient: Réattachement du client au channel " + this.name + ". Messages dans la queue: " + result);
-            }.bind(this));
-        }
-        var connId = client.getConnId();
-        if (connId) {
-            app.ClusterManager.getClient().hset(this.redisKey, connId + "_" + this.name, JSON.stringify({
+            app.ClusterManager.getClient().hset(this.redisKey, client.id + "_" + this.name, JSON.stringify({
                 channelName: this.name,
                 cid: client.id,
-                connId: connId,
+                connId: client.getConnId(),
                 pid: process.pid,
                 userName: client.getUserName()
             }));
+            if (arguments.length == 2)
+                sub.notifySubscribeEvents = notifySubscribeEvents;
+            if (sub.notifySubscribeEvents)
+                this.sendChannelEvent(client.getSafeDBClient(), "subscribe");
         }
-        if (arguments.length == 2)
-            sub.notifySubscribeEvents = notifySubscribeEvents;
-        if (sub.notifySubscribeEvents)
-            this.sendChannelEvent(client.getSafeDBClient(), "subscribe");
+        else {
+            this.logger.debug("Subscription sur le channel " + this.name + ": le client " + client.getShortId() + " est déjà abonné");
+        }
         return sub;
     }
     createSubscription(client) {
@@ -189,10 +183,14 @@ class Channel extends TeventDispatcher {
         for (var i = 0; i < this.subscriptions.length; i++) {
             if (this.subscriptions[i].id == id) {
                 var client = this.subscriptions[i].client;
-                app.ClusterManager.getClient().hdel(this.redisKey, client.getConnId() + "_" + this.name);
-                this.sendChannelEvent(client.id, "unsubscribe");
-                this.subscriptions.splice(i, 1);
-                this.logger.debug("Channel.removeSubscription on channel " + this.name + " (cid=" + client.getShortId() + ")");
+                if (client.id) {
+                    this.sendChannelEvent(client.id, "unsubscribe");
+                    this.subscriptions.splice(i, 1);
+                    this.logger.debug("Channel.removeSubscription on channel " + this.name + " (cid=" + client.getShortId() + ")");
+                }
+                else {
+                    this.logger.error("_removeSubscriptionById: client.id=" + client.id);
+                }
                 break;
             }
         }

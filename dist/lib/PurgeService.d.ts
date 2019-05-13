@@ -11,8 +11,9 @@ export declare class PurgeService {
         "redisClientsTimeout": number;
         "destroyClientsTimeout": number;
     };
-    purgeRedisConnections(): Promise<void>;
-    purgeRedisSubscriptions(): Promise<any>;
+    raz(): void;
+    purgeRedisConnections(): Promise<any[]>;
     purgeRedisClients(): any;
+    purgeRedisSubscriptions(): any;
     destroyOldClients(): Promise<void>;
 }

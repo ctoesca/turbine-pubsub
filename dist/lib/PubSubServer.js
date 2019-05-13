@@ -27,6 +27,7 @@ class PubSubServer extends turbine.services.TbaseService {
         this._channelsManager = new ChannelsManager_1.ChannelsManager(this);
         this.purgeService = new PurgeService_1.PurgeService(this);
         this.logger.info("PubSubServer created active=" + this.active + ", path=" + this.config.apiPath);
+        this.purgeService.raz();
     }
     canSubscribe(client, channelName) {
         return Promise.resolve(true);
@@ -163,9 +164,9 @@ class PubSubServer extends turbine.services.TbaseService {
         var activeConnexions = {};
         var inactiveConnexions = {};
         var activeMessagesQueues = {};
-        this.purgeService.purgeRedisClients()
+        this.purgeService.purgeRedisConnections()
             .then(() => {
-            return this.purgeService.purgeRedisConnections();
+            return this.purgeService.purgeRedisClients();
         })
             .then(() => {
             return this.purgeService.purgeRedisSubscriptions();
@@ -243,8 +244,8 @@ class PubSubServer extends turbine.services.TbaseService {
     }
     onCloseClient(e) {
         var id = e.currentTarget.id;
-        this.logger.debug("onCloseClient " + e.data.connId);
-        app.ClusterManager.getClient().hdel("clientsConnexions", e.data.connId);
+        this.logger.debug("onCloseClient " + e.currentTarget.id);
+        app.ClusterManager.getClient().hdel("clientsConnexions", e.currentTarget.getConnId());
     }
     getClientsById(id) {
         var r = [];

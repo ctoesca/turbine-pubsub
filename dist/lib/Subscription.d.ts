@@ -22,7 +22,6 @@ export declare class Subscription extends TeventDispatcher {
     broadcast(message: any): number;
     getQueue(): Queue;
     getClient(): Client;
-    setClient(client: Client): void;
     _onClientClose(e: any): void;
     _onClientDestroy(e: Tevent): void;
     free(): void;

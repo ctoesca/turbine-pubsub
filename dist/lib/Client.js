@@ -218,22 +218,24 @@ class Client extends TeventDispatcher {
     }
     onClose(data) {
         if (this.isDestroyed) {
-            this.logger.warn("onClose: CLIENT IS ALREADY DESTROYED !!");
+            this.logger.warn("Client.onClose: CLIENT IS ALREADY DESTROYED !!");
             return;
         }
         if (this.logger)
             this.logger.info("close connection username=" + this.getUserName() + ", cid=" + this.getShortId());
         if (this.server && this.DBClient)
             this.server.publish({ type: 'publish', channel: "system", payload: { type: "disconnected", client: this.getSafeDBClient() } });
-        var connId = this.getConnId();
-        this.authenticated = false;
+        this.dispatchEvent(new Tevent("CLOSE", this.DBClient));
         this.conn = null;
-        this.closeDate = new Date().getTime();
-        this.saveClient();
-        this.dispatchEvent(new Tevent("CLOSE", { connId: connId }));
+        this.free();
     }
     free() {
+        if (this.isDestroyed) {
+            this.logger.warn("Client.free: CLIENT IS ALREADY DESTROYED !!");
+            return;
+        }
         super.free();
+        this.disconnect();
         app.ClusterManager.getClient().hdel("clients", this.id)
             .then((result) => {
             this.logger.info("Destroy client " + this.getShortId() + ": suppression dans REDIS");
@@ -392,6 +394,7 @@ class Client extends TeventDispatcher {
             return;
         var newClient = {
             "id": this.id,
+            "connId": this.getConnId(),
             "userAgent": this.userAgent,
             "id_user": this.getUserId(),
             "userName": this.getUserName(),
@@ -424,10 +427,10 @@ class Client extends TeventDispatcher {
                     this.logger.debug("AUTH: oldClient=", oldClient);
                 }
                 this.id = args.clientId;
+                this.authenticated = true;
                 return this.saveClient();
             }.bind(this))
                 .then(function (newClient) {
-                this.authenticated = true;
                 this.DBClient = newClient;
                 this.logger.info("authenticate: client " + this.getShortId() + ". userName=" + this.getUserName() + " (ID=" + this.getUserId() + ")");
                 var clientClone = this.getSafeDBClient();

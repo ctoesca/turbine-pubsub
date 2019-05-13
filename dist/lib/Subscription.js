@@ -11,10 +11,13 @@ class Subscription extends TeventDispatcher {
         this.channelName = null;
         this.noClientTimeout = 120000;
         this.clientDestroyTimestamp = null;
-        this.setClient(client);
         this.channel = channel;
         this.channelName = channel.name;
-        this.id = this.channelName + "_" + this.client.getConnId();
+        this.client = client;
+        this.id = this.channelName + "_" + this.client.id;
+        this.clientDestroyTimestamp = null;
+        this.client.on("DESTROY", this._onClientDestroy, this);
+        this.client.on("CLOSE", this._onClientClose, this);
         this._queue = new Queue_js_1.Queue(this);
         this.logger = app.getLogger("Subscription");
     }
@@ -63,44 +66,18 @@ class Subscription extends TeventDispatcher {
     getClient() {
         return this.client;
     }
-    setClient(client) {
-        if (this.client != null) {
-            this.logger.trace("Subscription.setClient: détachement client " + this.client.instanceId);
-            this.client.offByCtx(this);
-        }
-        this.client = client;
-        this.clientDestroyTimestamp = null;
-        this.client.on("DESTROY", this._onClientDestroy, this);
-        this.client.on("CLOSE", this._onClientClose, this);
-    }
     _onClientClose(e) {
         this.channel.sendChannelEvent(e.currentTarget.getSafeDBClient(), "disconnected");
-        var redisKey = e.data.connId + "_" + this.channelName;
-        app.ClusterManager.getClient().hget("subscriptions", redisKey)
-            .then(result => {
-            var subscription = JSON.parse(result);
-            if (subscription == null) {
-                throw "subscription " + redisKey + " = NULL";
-            }
-            else {
-                subscription.connId = null;
-                return app.ClusterManager.getClient().hset("subscriptions", redisKey, JSON.stringify(subscription));
-            }
-        })
-            .then(result => {
-            this.logger.debug("subscriptions " + redisKey + " => set connId = NULL");
-        })
-            .catch(err => {
-            this.logger.error("subscription._onClientClose: ", err);
-        });
+        this.free();
     }
     _onClientDestroy(e) {
         this.logger.debug("subscription._onClientDestroy: DESTROY subscription " + this.channelName + " (cid=" + this.client.getShortId() + ")");
-        this.free();
     }
     free() {
         this.logger.debug("Destroy subscription " + this.id);
         super.free();
+        var redisKey = this.client.id + "_" + this.channelName;
+        app.ClusterManager.getClient().hdel("subscriptions", redisKey);
         if (this.client)
             this.client.offByCtx(this);
         this.client = null;

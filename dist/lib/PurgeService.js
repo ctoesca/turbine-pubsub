@@ -21,16 +21,16 @@ class PurgeService {
             "destroyClientsTimeout": 120
         };
     }
-    purgeRedisConnections() {
-        return Promise.resolve();
+    raz() {
+        app.ClusterManager.getClient().del("clientsConnexions");
+        app.ClusterManager.getClient().del("clients");
+        app.ClusterManager.getClient().del("subscriptions");
+        app.ClusterManager.getClient().del("channels");
     }
-    purgeRedisSubscriptions() {
-        var activeConnexions = {};
-        var inactiveConnexions = {};
-        var activeMessagesQueues = {};
+    purgeRedisConnections() {
+        var now = new Date().getTime() / 1000;
         return this.pubsubServer.getClusterConnexions()
             .then((result) => {
-            var now = new Date().getTime() / 1000;
             var connToDelete = [];
             for (var connId in result) {
                 var connexion = result[connId];
@@ -38,11 +38,7 @@ class PurgeService {
                 if (typeof connexion.lastActivityDate == "number")
                     diffSec = now - (connexion.lastActivityDate / 1000);
                 if ((diffSec === null) || (diffSec > this.config.redisConnexionsTimeout)) {
-                    inactiveConnexions[connId] = connexion;
                     connToDelete.push(connId);
-                }
-                else {
-                    activeConnexions[connId] = connexion;
                 }
             }
             if (connToDelete.length) {
@@ -54,10 +50,44 @@ class PurgeService {
                     this.logger.error("Suppression " + connToDelete.length + " connexions dans REDIS: " + err.toString());
                 });
             }
-            return activeConnexions;
+            return connToDelete;
+        });
+    }
+    purgeRedisClients() {
+        this.logger.debug("purgeRedisClients");
+        var now = new Date().getTime();
+        var from = now - (this.config.redisClientsTimeout * 1000);
+        return app.ClusterManager.getClient().hgetall("clients")
+            .then(result => {
+            let clientsId = [];
+            for (var clientId in result) {
+                var client = JSON.parse(result[clientId]);
+                var toDelete = (typeof client.closeDate === "undefined") || (typeof client.connected === "undefined");
+                if (client.closeDate !== null) {
+                    toDelete = toDelete || (client.closeDate < from);
+                }
+                if (toDelete) {
+                    this.logger.error(client);
+                    clientsId.push(client.id);
+                }
+            }
+            if (clientsId.length > 0) {
+                this.logger.info("Supression de " + clientsId.length + " clients dans REDIS");
+                return app.ClusterManager.getClient().hdel("clients", clientsId);
+            }
+            else {
+                return Promise.resolve();
+            }
         })
-            .then((activeConnexions) => {
-            this.logger.debug("activeConnexions ", activeConnexions);
+            .catch(err => {
+            this.logger.error("purgeRedisClients", err);
+        });
+    }
+    purgeRedisSubscriptions() {
+        var clients;
+        return app.ClusterManager.getClient().hgetall("clients")
+            .then((result) => {
+            clients = result;
             return app.ClusterManager.getClient().hgetall("subscriptions");
         })
             .then((subscriptions) => {
@@ -66,30 +96,23 @@ class PurgeService {
             var messagesQueuesToDelete = [];
             for (var key in subscriptions) {
                 var sub = JSON.parse(subscriptions[key]);
-                var channelName = sub.channelName;
-                var messagesQueuesId = channelName + "_" + sub.cid + "_messages_queue";
-                var connId = key.leftOf("_");
-                if (!connId)
-                    this.logger.warn("connId non défini: key=" + key);
-                if (!activeConnexions[connId]) {
-                    subscriptionsToDelete.push(key);
-                    messagesQueuesToDelete.push(messagesQueuesId);
-                    if (inactiveConnexions[connId]) {
-                        var client = inactiveConnexions[connId].client;
-                        this.pubsubServer.sendChannelEvent("unsubscribe", channelName, client.id);
-                    }
+                if (!sub.cid) {
+                    this.logger.warn("sub.cid non défini: key=" + key);
                 }
                 else {
-                    activeMessagesQueues[messagesQueuesId] = true;
+                    var channelName = sub.channelName;
+                    var messagesQueuesId = channelName + "_" + sub.cid + "_messages_queue";
+                    var clientExists = (typeof clients[sub.cid] !== "undefined");
+                    if (!clientExists) {
+                        subscriptionsToDelete.push(key);
+                        messagesQueuesToDelete.push(messagesQueuesId);
+                    }
                 }
             }
             var promises = [];
             if (subscriptionsToDelete.length > 0) {
                 this.logger.info("Suppression de " + subscriptionsToDelete.length + " subscription(s) dans REDIS");
                 promises.push(app.ClusterManager.getClient().hdel("subscriptions", subscriptionsToDelete));
-            }
-            if (messagesQueuesToDelete.length > 0) {
-                this.logger.info("Suppression de " + messagesQueuesToDelete.length + " message_queues dans REDIS");
                 promises.push(app.ClusterManager.getClient().del(messagesQueuesToDelete));
             }
             return Promise.all(promises);
@@ -98,47 +121,6 @@ class PurgeService {
             return app.ClusterManager.getClient().keys(app.ClusterManager.keyPrefix + "*_messages_queue");
         })
             .then((results) => {
-            var messagesQueuesToDelete = [];
-            for (var i = 0; i < results.length; i++) {
-                var key = results[i];
-                var messagesQueuesId = key.rightOf(app.ClusterManager.keyPrefix);
-                if (typeof activeMessagesQueues[messagesQueuesId] == "undefined") {
-                    messagesQueuesToDelete.push(messagesQueuesId);
-                }
-            }
-            if (messagesQueuesToDelete.length > 0) {
-                this.logger.info("Suppression de " + messagesQueuesToDelete.length + " message_queues dans REDIS");
-                return app.ClusterManager.getClient().del(messagesQueuesId);
-            }
-            else {
-                return Promise.resolve();
-            }
-        });
-    }
-    purgeRedisClients() {
-        this.logger.debug("purgeRedisClients");
-        var now = Math.round(new Date().getTime() / 1000);
-        var from = now - this.config.redisClientsTimeout;
-        return app.ClusterManager.getClient().hgetall("clients")
-            .then(result => {
-            let clientsId = [];
-            for (var k in result) {
-                var client = JSON.parse(result[k]);
-                if (typeof client.last_use == "undefined") {
-                    this.logger.warn("purgeRedisClients: client.last_use non défini");
-                }
-                else if (client.last_use < from) {
-                    this.logger.info("Supression client " + k + " dans REDIS");
-                    clientsId.push(client.id);
-                }
-            }
-            if (clientsId.length > 0)
-                return app.ClusterManager.getClient().hdel("clients", clientsId);
-            else
-                return Promise.resolve();
-        })
-            .catch(err => {
-            this.logger.error("purgeRedisClients", err);
         });
     }
     destroyOldClients() {
