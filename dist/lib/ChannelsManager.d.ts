@@ -10,14 +10,14 @@ export declare class ChannelsManager extends TeventDispatcher {
     constructor(pubSubServer: PubSubServer);
     static purgeChannelsInRedis(): void;
     private static purgeChannelInRedis;
-    publish(messages: any): void;
+    publish(messages: any): any;
     broadcast(messages: any): void;
     flatify(): Promise<{}>;
     start(): void;
     stop(): void;
     getChannelClients(channelName: string): Promise<{}>;
     getChannel(name: string, create?: boolean): any;
-    createChannel(name: string): any;
+    createChannel(name: string, accessKey?: string): any;
     onChannelDestroy(e: Tevent): void;
     free(): void;
 }

@@ -60,7 +60,7 @@ class ChannelsManager extends TeventDispatcher {
             if (message.opt && message.opt.persist)
                 Channel_1.Channel.storeMessage(message);
         }
-        app.ClusterManager.getClient().publish("pub-sub-messages", JSON.stringify(messages));
+        return app.ClusterManager.getClient().publish("pub-sub-messages", JSON.stringify(messages));
     }
     broadcast(messages) {
         var count = 0;
@@ -140,7 +140,7 @@ class ChannelsManager extends TeventDispatcher {
             r = this.createChannel(name);
         return r;
     }
-    createChannel(name) {
+    createChannel(name, accessKey = null) {
         if (this.getChannel(name) != null)
             throw "Channel " + name + " already exists";
         this._channels[name] = new Channel_1.Channel(name, this.pubSubServer);

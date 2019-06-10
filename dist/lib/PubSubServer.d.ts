@@ -16,6 +16,7 @@ export declare class PubSubServer extends turbine.services.TbaseService {
     clusterTimer: Ttimer;
     _channelsManager: ChannelsManager;
     purgeService: PurgeService;
+    authenticatedClients: Map<string, any>;
     constructor(name: any, server: any, config: any);
     canSubscribe(client: any, channelName: any): Promise<boolean>;
     getDefaultConfig(): {
@@ -30,6 +31,8 @@ export declare class PubSubServer extends turbine.services.TbaseService {
     onIsMasterChanged(e: Tevent): void;
     flatify(): Promise<{}>;
     getClusterConnexions(): Promise<{}>;
+    getClusterClients(): Promise<{}>;
+    getClusterClient(id: string): Promise<{}>;
     onSockLog(severity: string, message: any): void;
     getChannelsManager(): ChannelsManager;
     sendChannelEvent(type: string, channelName: string, DBClient: any): void;
@@ -38,16 +41,18 @@ export declare class PubSubServer extends turbine.services.TbaseService {
     eachClient(callback: any): void;
     removeClient(client: Client): number;
     onConnection(conn: any, req: express.Request): void;
+    onClientAuth(e: Tevent): void;
     onDestroyClient(e: Tevent): void;
     onCloseClient(e: Tevent): void;
-    getClientsById(id: string): any[];
+    getClientById(id: string): any;
     getClientsByUsername(username: string): any[];
     onRedisPubSubMessage(redisChannel: string, data: any): void;
-    publish(messages: any, exclude?: any): void;
+    publish(messages: any, exclude?: any): any;
     sendToUsers(userNames: string[], messages: any): void;
     sendMessagesToLocalUsersNames(userNames: any, messages: any): void;
     sendMessagesToLocalClients(clientsId: any, messages: any): void;
-    disconnectClient(id: string): any[];
+    disconnectLocalClient(id: string): any;
+    disconnectClusterClient(id: string): any;
     processBeforeRequest(req: express.Request, res: express.Response, next: express.NextFunction): boolean;
     initRoutes(): void;
 }

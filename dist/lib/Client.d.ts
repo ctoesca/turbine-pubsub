@@ -14,16 +14,24 @@ export declare class Client extends TeventDispatcher {
     server: PubSubServer;
     static lastIntanceId: any;
     session: any;
-    authenticated: false;
+    authenticated: boolean;
     userAgent: any;
     closeDate: number;
     creationDate: number;
     _rpcMethods: any;
     constructor(server: PubSubServer, conn: any, opt: any);
+    toDTO(): {
+        id: string;
+        connId: any;
+        lastActivityDate: number;
+        authenticated: boolean;
+        closeDate: number;
+        creationDate: number;
+    };
     getSessionId(): any;
     getUserName(): any;
     getUserId(): any;
-    flatify(): Promise<{}>;
+    flatify(): Promise<unknown>;
     getShortId(): any;
     getConnId(): any;
     sendMessage(message: any): number;

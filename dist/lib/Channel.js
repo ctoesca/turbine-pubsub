@@ -10,6 +10,7 @@ class Channel extends TeventDispatcher {
         super();
         this.maxStoredMessages = 100;
         this.subscriptions = [];
+        this.accessKey = null;
         this.name = name;
         this.pubSubServer = pubSubServer;
         this.redisKey = "subscriptions";
@@ -65,7 +66,8 @@ class Channel extends TeventDispatcher {
     addChannelInRedis() {
         var data = JSON.stringify({
             name: this.name,
-            maxStoredMessages: this.maxStoredMessages
+            maxStoredMessages: this.maxStoredMessages,
+            accessKey: this.accessKey
         });
         app.ClusterManager.getClient().hset("channels", this.name, data);
     }
@@ -136,7 +138,12 @@ class Channel extends TeventDispatcher {
             this.logger.debug("Messages envoyés sur channel " + this.name + ": " + count);
         return count;
     }
-    subscribeClient(client, notifySubscribeEvents) {
+    subscribeClient(client, opt = {}) {
+        if (this.accessKey) {
+            if (opt.accessKey !== this.accessKey) {
+                throw "Forbidden acces to channel " + this.name + " (accessKey needed)";
+            }
+        }
         var sub = this.getSubscription(client);
         if (sub == null) {
             sub = this.createSubscription(client);
@@ -148,8 +155,8 @@ class Channel extends TeventDispatcher {
                 pid: process.pid,
                 userName: client.getUserName()
             }));
-            if (arguments.length == 2)
-                sub.notifySubscribeEvents = notifySubscribeEvents;
+            if (typeof opt.notifySubscribeEvents !== 'undefined')
+                sub.notifySubscribeEvents = opt.notifySubscribeEvents;
             if (sub.notifySubscribeEvents)
                 this.sendChannelEvent(client.getSafeDBClient(), "subscribe");
         }

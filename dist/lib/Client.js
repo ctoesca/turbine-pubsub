@@ -15,6 +15,7 @@ class Client extends TeventDispatcher {
         this.useSockjs = false;
         this.conn = null;
         this.session = null;
+        this.authenticated = false;
         this.userAgent = null;
         this.closeDate = null;
         this.creationDate = null;
@@ -54,6 +55,17 @@ class Client extends TeventDispatcher {
             if (opt.req.headers)
                 this.userAgent = new UAParser(opt.req.headers["user-agent"]).getResult();
         }
+    }
+    toDTO() {
+        let r = {
+            id: this.id,
+            connId: this.getConnId(),
+            lastActivityDate: this.lastActivityDate,
+            authenticated: this.authenticated,
+            closeDate: this.closeDate,
+            creationDate: this.creationDate
+        };
+        return r;
     }
     getSessionId() {
         var r = null;
@@ -160,10 +172,14 @@ class Client extends TeventDispatcher {
             console.log("onMessage: CLIENT IS DESTROYED !!");
             return;
         }
-        if (!this.DBClient)
-            this.logger.debug("onMessage: DBClient=null");
         this.touchClusterClient();
         message = JSON.parse(message);
+        let evt = new Tevent("MESSAGE", {
+            message: message
+        });
+        this.dispatchEvent(evt);
+        if (evt.defaultPrevented)
+            return;
         if (message.type == 'publish') {
             this.logger.debug("User " + this.getUserName() + ": publish message: type=", message.type + ", channel=" + message.channel);
             if (this.id != null) {
@@ -253,6 +269,8 @@ class Client extends TeventDispatcher {
         });
     }
     returnRpcResult(payload, result) {
+        if (this.isDestroyed)
+            return;
         this.sendMessage({
             type: 'rpc_callback',
             payload: {
@@ -264,6 +282,8 @@ class Client extends TeventDispatcher {
         });
     }
     returnRpcFailure(payload, exception) {
+        if (this.isDestroyed)
+            return;
         this.logger.warn("Echec appel RPC: " + payload.functionName + " => ", exception);
         if (typeof exception == "string")
             exception = { message: exception };
@@ -289,7 +309,7 @@ class Client extends TeventDispatcher {
         }
     }
     getConnectedClients(args, success, failure) {
-        this.logger.info("getConnectedClients", args);
+        this.logger.debug("getConnectedClients", args);
         return this.server.getClusterConnexions()
             .then((result) => {
             var clientsHash = {};
@@ -352,11 +372,11 @@ class Client extends TeventDispatcher {
         success(subs);
     }
     subscribe(args, success, failure) {
-        this.logger.debug("subscribe args=", args);
         if (this.DBClient == null) {
             failure("subscribe: le client n'est pas identifié");
         }
         else {
+            this.logger.debug("subscribe args=", args);
             var userName = this.getUserName();
             var subs = [];
             var channelsManager = this.server.getChannelsManager();
@@ -374,11 +394,19 @@ class Client extends TeventDispatcher {
                     if (canSubscribe) {
                         var channel = channelsManager.getChannel(args.channels[i].name, true);
                         channelsNames += args.channels[i].name + " ";
-                        var sub = channel.subscribeClient(this, args.channels[i].notifySubscribeEvents);
-                        sub = { channel: channel.name, id: sub.id, notifySubscribeEvents: sub.notifySubscribeEvents, pendingMessages: sub.getQueue().consume() };
-                        subs.push(sub);
-                        accepted++;
-                        this.logger.debug("user " + userName + " => SUBSCRIBE channel '" + channel.name + "'. notifySubscribeEvents=" + args.channels[i].notifySubscribeEvents);
+                        try {
+                            var sub = channel.subscribeClient(this, {
+                                notifySubscribeEvents: args.channels[i].notifySubscribeEvents
+                            });
+                            sub = { channel: channel.name, id: sub.id, notifySubscribeEvents: sub.notifySubscribeEvents, pendingMessages: sub.getQueue().consume() };
+                            subs.push(sub);
+                            accepted++;
+                            this.logger.debug("user " + userName + " => SUBSCRIBE channel '" + channel.name + "'. notifySubscribeEvents=" + args.channels[i].notifySubscribeEvents);
+                        }
+                        catch (err) {
+                            this.logger.warn(err);
+                            cancelled++;
+                        }
                     }
                     else {
                         cancelled++;
@@ -386,7 +414,10 @@ class Client extends TeventDispatcher {
                 }
                 success(subs);
                 this.logger.info("user " + userName + " => SUBSCRIBE =>> " + subs.length + " channel(s) - rejected: " + cancelled + ", accepted: " + accepted);
-            }.bind(this));
+            }.bind(this))
+                .catch(err => {
+                failure(err);
+            });
         }
     }
     saveClient() {
@@ -421,7 +452,7 @@ class Client extends TeventDispatcher {
         else {
             var oldClient = null;
             app.ClusterManager.getClient().hget("clients", args.clientId)
-                .then(function (oldClient) {
+                .then((oldClient) => {
                 if (oldClient !== null) {
                     var oldClient = JSON.parse(oldClient);
                     this.logger.debug("AUTH: oldClient=", oldClient);
@@ -429,15 +460,16 @@ class Client extends TeventDispatcher {
                 this.id = args.clientId;
                 this.authenticated = true;
                 return this.saveClient();
-            }.bind(this))
-                .then(function (newClient) {
+            })
+                .then((newClient) => {
                 this.DBClient = newClient;
                 this.logger.info("authenticate: client " + this.getShortId() + ". userName=" + this.getUserName() + " (ID=" + this.getUserId() + ")");
                 var clientClone = this.getSafeDBClient();
                 success(clientClone);
+                this.dispatchEvent(new Tevent("AUTHENTICATED"));
                 this.server.publish({ type: 'publish', channel: "system", payload: { type: "connected", client: clientClone } });
-            }.bind(this))
-                .catch(function (err) {
+            })
+                .catch((err) => {
                 this.authenticated = false;
                 this.DBClient = null;
                 this.id = null;

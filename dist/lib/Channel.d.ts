@@ -14,6 +14,7 @@ export declare class Channel extends TeventDispatcher {
     subscriptions: any[];
     logger: any;
     purgeTimer: Ttimer;
+    accessKey: string;
     constructor(name: string, pubSubServer: PubSubServer);
     static storeMessage(message: any): Promise<{}>;
     onPurgeTimer(e: any): void;
@@ -24,7 +25,7 @@ export declare class Channel extends TeventDispatcher {
     flatify(): Promise<{}>;
     getMessages(): Promise<{}>;
     broadcast(message: any, filter: any): number;
-    subscribeClient(client: Client, notifySubscribeEvents: any): any;
+    subscribeClient(client: Client, opt?: any): any;
     createSubscription(client: Client): Subscription;
     unsubscribeClient(client: Client): any;
     _removeSubscriptionById(id: string): any;
