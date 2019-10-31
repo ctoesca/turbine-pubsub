@@ -9,17 +9,26 @@ class Subscription extends TeventDispatcher {
         super();
         this.notifySubscribeEvents = false;
         this.channelName = null;
-        this.noClientTimeout = 120000;
-        this.clientDestroyTimestamp = null;
         this.channel = channel;
         this.channelName = channel.name;
         this.client = client;
-        this.id = this.channelName + "_" + this.client.id;
-        this.clientDestroyTimestamp = null;
+        this.id = Subscription.calcId(this.channelName, this.client);
         this.client.on("DESTROY", this._onClientDestroy, this);
         this.client.on("CLOSE", this._onClientClose, this);
         this._queue = new Queue_js_1.Queue(this);
         this.logger = app.getLogger("Subscription");
+    }
+    static calcId(channelName, client) {
+        let clientId;
+        if (typeof client == "string") {
+            clientId = client;
+        }
+        else {
+            if (client.id === null)
+                throw "calcId(" + channelName + " : client.id is null";
+            clientId = client.id;
+        }
+        return channelName + "_" + clientId;
     }
     toJson() {
         var r = {
@@ -33,29 +42,29 @@ class Subscription extends TeventDispatcher {
         return JSON.parse(json);
     }
     flatify() {
-        return new Promise(function (resolve, reject) {
+        return new Promise((resolve, reject) => {
             var r = {
                 client: {
                     id: this.client.id,
-                    connId: this.client.connId,
+                    connId: this.client.getConnId(),
                     userName: null
                 }
             };
             if (this.client.DBClient)
                 r.client.userName = this.client.DBClient.userName;
             resolve(r);
-        }.bind(this));
+        });
     }
     broadcast(message) {
         if (!this.notifySubscribeEvents && (message.type == "channel_event"))
             return;
         var count = 0;
-        if (this.client && this.client.isConnected()) {
+        if (this.client && this.client.isConnected() && this.client.authenticated) {
             count += this.client.sendMessage(message);
         }
         else {
             if (this.logger)
-                this.logger.debug(this.channelName + " envoi message à un client non connecté. Ajout dans le tampon (cid=" + this.client.id + ")");
+                this.logger.debug(this.channelName + " envoi message à un client non connecté. Ajout dans le tampon (cid=" + this.client.getShortId() + ")");
             this._queue.addMessage(message);
         }
         return count;

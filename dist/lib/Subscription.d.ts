@@ -11,11 +11,10 @@ export declare class Subscription extends TeventDispatcher {
     logger: any;
     notifySubscribeEvents: boolean;
     channelName: string;
-    noClientTimeout: number;
-    clientDestroyTimestamp: number;
     client: Client;
     channel: Channel;
     constructor(channel: Channel, client: Client);
+    static calcId(channelName: string, client: Client): string;
     toJson(): string;
     fromJson(json: string): any;
     flatify(): Promise<{}>;

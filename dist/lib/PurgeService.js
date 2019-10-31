@@ -16,71 +16,58 @@ class PurgeService {
     }
     getDefaultConfig() {
         return {
-            "redisConnexionsTimeout": 600,
-            "redisClientsTimeout": 600,
-            "destroyClientsTimeout": 120
+            "redisConnexionsTimeout": 300,
+            "redisClientsTimeout": 300,
+            "notAuthenticatedClientsTimeout": 120
         };
     }
     raz() {
-        app.ClusterManager.getClient().del("clientsConnexions");
-        app.ClusterManager.getClient().del("clients");
-        app.ClusterManager.getClient().del("subscriptions");
-        app.ClusterManager.getClient().del("channels");
     }
     purgeRedisConnections() {
         var now = new Date().getTime() / 1000;
+        var connections;
+        var clients;
+        var connToDelete = {};
         return this.pubsubServer.getClusterConnexions()
             .then((result) => {
-            var connToDelete = [];
-            for (var connId in result) {
-                var connexion = result[connId];
-                var diffSec = null;
-                if (typeof connexion.lastActivityDate == "number")
-                    diffSec = now - (connexion.lastActivityDate / 1000);
-                if ((diffSec === null) || (diffSec > this.config.redisConnexionsTimeout)) {
-                    connToDelete.push(connId);
+            connections = result;
+            for (var connId in connections) {
+                var connexion = connections[connId];
+                var diffSec = now - (new Date(connexion.lastActivityDate).getTime() / 1000);
+                if (diffSec > this.config.redisConnexionsTimeout) {
+                    connToDelete[connId] = connexion;
                 }
             }
-            if (connToDelete.length) {
-                app.ClusterManager.getClient().hdel("clientsConnexions", connToDelete)
+            let connToDeleteArray = Object.keys(connToDelete);
+            if (connToDeleteArray.length) {
+                app.ClusterManager.getClient().hdel("clientsConnexions", connToDeleteArray)
                     .then((result) => {
-                    this.logger.info("Suppression " + connToDelete.length + " connexions dans REDIS");
+                    this.logger.info(connToDeleteArray.length + " connexions supprimées dans REDIS");
                 })
                     .catch((err) => {
-                    this.logger.error("Suppression " + connToDelete.length + " connexions dans REDIS: " + err.toString());
+                    this.logger.error("Echec suppression " + connToDeleteArray.length + " connexions dans REDIS: " + err.toString());
                 });
             }
-            return connToDelete;
-        });
-    }
-    purgeRedisClients() {
-        this.logger.debug("purgeRedisClients");
-        var now = new Date().getTime();
-        var from = now - (this.config.redisClientsTimeout * 1000);
-        return app.ClusterManager.getClient().hgetall("clients")
-            .then(result => {
-            let clientsId = [];
-            for (var clientId in result) {
-                var client = JSON.parse(result[clientId]);
-                var toDelete = (typeof client.closeDate === "undefined") || (typeof client.connected === "undefined");
-                if (client.closeDate !== null) {
-                    toDelete = toDelete || (client.closeDate < from);
-                }
-                if (toDelete) {
-                    this.logger.error(client);
-                    clientsId.push(client.id);
-                }
-            }
-            if (clientsId.length > 0) {
-                this.logger.info("Supression de " + clientsId.length + " clients dans REDIS");
-                return app.ClusterManager.getClient().hdel("clients", clientsId);
-            }
-            else {
-                return Promise.resolve();
-            }
+            return this.pubsubServer.getClusterClients();
         })
-            .catch(err => {
-            this.logger.error("purgeRedisClients", err);
+            .then((result) => {
+            clients = result;
+            var clientsToDelete = [];
+            for (var cid in clients) {
+                var client = clients[cid];
+                if ((typeof connections[client.connId] === "undefined") || (typeof connToDelete[client.connId] !== "undefined")) {
+                    clientsToDelete.push(cid);
+                }
+            }
+            if (clientsToDelete.length > 0) {
+                app.ClusterManager.getClient().hdel("clients", clientsToDelete)
+                    .then((result) => {
+                    this.logger.info(clientsToDelete.length + " clients supprimées dans REDIS");
+                })
+                    .catch((err) => {
+                    this.logger.error("Echec suppression " + clientsToDelete.length + " clients dans REDIS: " + err.toString());
+                });
+            }
         });
     }
     purgeRedisSubscriptions() {
@@ -99,14 +86,12 @@ class PurgeService {
                 if (!sub.cid) {
                     this.logger.warn("sub.cid non défini: key=" + key);
                 }
-                else {
-                    var channelName = sub.channelName;
-                    var messagesQueuesId = channelName + "_" + sub.cid + "_messages_queue";
-                    var clientExists = (typeof clients[sub.cid] !== "undefined");
-                    if (!clientExists) {
-                        subscriptionsToDelete.push(key);
-                        messagesQueuesToDelete.push(messagesQueuesId);
-                    }
+                var channelName = sub.channelName;
+                var messagesQueuesId = channelName + "_" + sub.cid + "_messages_queue";
+                var clientExists = (typeof clients[sub.cid] !== "undefined");
+                if (!clientExists) {
+                    subscriptionsToDelete.push(key);
+                    messagesQueuesToDelete.push(messagesQueuesId);
                 }
             }
             var promises = [];
@@ -127,35 +112,27 @@ class PurgeService {
         var now = new Date().getTime() / 1000;
         var connectedClients = 0;
         var toDelete = [];
-        for (var i in this.pubsubServer.clients) {
-            var c = this.pubsubServer.clients[i];
-            if (c == null) {
-                this.logger.warn(i + " => NULL client");
-                toDelete.push(i);
+        this.pubsubServer.eachClient((client) => {
+            if (!client.isConnected()) {
+                this.logger.info("Client (id=" + client.getShortId() + ") => not connected => destroy");
+                toDelete.push(client);
             }
             else {
-                if ((c.conn == null) && c.closeDate) {
-                    this.logger.debug(i + " => client.conn = NULL, clientId=" + c.getShortId());
-                    var diffSec = now - (c.closeDate / 1000);
-                    if (diffSec > this.config.destroyClientsTimeout) {
-                        c.free();
-                        toDelete.push(i);
-                    }
+                if (client.authenticated) {
+                    this.logger.debug("Client (id=" + client.getShortId() + ") => authenticated");
+                    connectedClients++;
                 }
                 else {
-                    c.touchClusterClient();
-                    if (c.id) {
-                        this.logger.debug(i + " => client authenticated, clientId=" + c.getShortId());
-                        connectedClients++;
-                    }
-                    else {
-                        this.logger.debug(i + " => client not authenticated");
+                    var diffSec = now - (new Date(client.creationDate).getTime() / 1000);
+                    if (diffSec > this.config.notAuthenticatedClientsTimeout) {
+                        this.logger.info("Client (id=" + client.getShortId() + ") => not authenticated => destroy");
+                        toDelete.push(client);
                     }
                 }
             }
-        }
+        });
         for (var j = 0; j < toDelete.length; j++) {
-            delete this.pubsubServer.clients[toDelete[j]];
+            this.pubsubServer.removeClient(toDelete[j]);
         }
         this.logger.info("Worker " + process.pid + ": Clients connected:" + connectedClients + ", supprimés:" + toDelete.length);
         return Promise.resolve();

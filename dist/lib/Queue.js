@@ -18,9 +18,9 @@ class Queue extends TeventDispatcher {
     addMessage(message) {
         if (this.messages.length > this.maxLength) {
             this.clear()
-                .then(function () {
+                .then(() => {
                 this._addMessage(message);
-            }.bind(this));
+            });
         }
         else {
             this._addMessage(message);
@@ -38,8 +38,8 @@ class Queue extends TeventDispatcher {
         return r;
     }
     getMessages() {
-        return new Promise(function (resolve, reject) {
-            app.ClusterManager.getClient().lrange(this.getKey(), 0 - 1, function (err, result) {
+        return new Promise((resolve, reject) => {
+            app.ClusterManager.getClient().lrange(this.getKey(), 0 - 1, (err, result) => {
                 if (err) {
                     reject(err);
                 }
@@ -49,20 +49,20 @@ class Queue extends TeventDispatcher {
                         r.push(JSON.parse(result[i]));
                     resolve(r);
                 }
-            }.bind(this));
-        }.bind(this));
+            });
+        });
     }
     getSize() {
-        return new Promise(function (resolve, reject) {
-            app.ClusterManager.getClient().llen(this.getKey(), function (err, result) {
+        return new Promise((resolve, reject) => {
+            app.ClusterManager.getClient().llen(this.getKey(), (err, result) => {
                 if (err) {
                     reject(err);
                 }
                 else {
                     resolve(result);
                 }
-            }.bind(this));
-        }.bind(this));
+            });
+        });
     }
     free() {
         super.free();
@@ -71,10 +71,10 @@ class Queue extends TeventDispatcher {
     }
     clear() {
         return app.ClusterManager.getClient().del(this.getKey())
-            .then(function (result) {
+            .then((result) => {
             this.logger.debug("Suppression message_queue: " + result);
             this.messages = [];
-        }.bind(this));
+        });
     }
 }
 exports.Queue = Queue;

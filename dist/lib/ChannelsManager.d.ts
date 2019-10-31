@@ -8,7 +8,7 @@ export declare class ChannelsManager extends TeventDispatcher {
     _channels: any;
     logger: any;
     constructor(pubSubServer: PubSubServer);
-    static purgeChannelsInRedis(): void;
+    static purgeChannelsInRedis(): any;
     private static purgeChannelInRedis;
     publish(messages: any): any;
     broadcast(messages: any): void;

@@ -9,11 +9,10 @@ export declare class PurgeService {
     getDefaultConfig(): {
         "redisConnexionsTimeout": number;
         "redisClientsTimeout": number;
-        "destroyClientsTimeout": number;
+        "notAuthenticatedClientsTimeout": number;
     };
     raz(): void;
-    purgeRedisConnections(): Promise<any[]>;
-    purgeRedisClients(): any;
+    purgeRedisConnections(): Promise<void>;
     purgeRedisSubscriptions(): any;
     destroyOldClients(): Promise<void>;
 }

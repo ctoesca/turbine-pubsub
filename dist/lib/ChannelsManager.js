@@ -12,7 +12,7 @@ class ChannelsManager extends TeventDispatcher {
         this.logger = app.getLogger("ChannelsManager");
     }
     static purgeChannelsInRedis() {
-        app.ClusterManager.getClient().hgetall("subscriptions")
+        return app.ClusterManager.getClient().hgetall("subscriptions")
             .then(function (subscriptions) {
             var channelsWithSubscriptions = {};
             for (var key in subscriptions) {
@@ -20,23 +20,23 @@ class ChannelsManager extends TeventDispatcher {
                 channelsWithSubscriptions[sub.channelName] = true;
             }
             return app.ClusterManager.getClient().hgetall("channels")
-                .then(function (channels) {
+                .then((channels) => {
                 for (var channelName in channels) {
                     if (typeof channelsWithSubscriptions[channelName] == "undefined") {
                         ChannelsManager.purgeChannelInRedis(channelName);
                     }
                 }
-            }.bind(this));
+            });
         });
     }
     static purgeChannelInRedis(channelName) {
         return app.ClusterManager.getClient().lrange("channels_messages_" + channelName, -1, -1)
-            .then(function (results) {
+            .then((results) => {
             var toDelete = false;
             if (results.length > 0) {
                 var lastMessage = JSON.parse(results[0]);
                 var now = new Date();
-                var diffSec = (now.getTime() - lastMessage.timestamp) / 1000;
+                var diffSec = (now.getTime() - new Date(lastMessage.timestamp).getTime()) / 1000;
                 if (diffSec > 3600) {
                     toDelete = true;
                 }
@@ -49,14 +49,14 @@ class ChannelsManager extends TeventDispatcher {
                 app.ClusterManager.getClient().hdel("channels", channelName);
                 app.ClusterManager.getClient().del("channels_messages_" + channelName);
             }
-        }.bind(this));
+        });
     }
     publish(messages) {
         if (typeof messages.push != "function")
             messages = [messages];
         for (var i = 0; i < messages.length; i++) {
             var message = messages[i];
-            message.timestamp = new Date().getTime();
+            message.timestamp = new Date().toISOString();
             if (message.opt && message.opt.persist)
                 Channel_1.Channel.storeMessage(message);
         }
@@ -74,20 +74,20 @@ class ChannelsManager extends TeventDispatcher {
         }
     }
     flatify() {
-        return new Promise(function (resolve, reject) {
+        return new Promise((resolve, reject) => {
             var r = {
                 _channels: {}
             };
             var promises = [];
             for (var k in this._channels)
                 promises.push(this._channels[k].flatify());
-            Promise.all(promises).then(function (result) {
+            Promise.all(promises).then((result) => {
                 r._channels = {};
                 for (var i = 0; i < result.length; i++)
                     r._channels[result[i].name] = result[i];
                 resolve(r);
-            }.bind(this));
-        }.bind(this));
+            });
+        });
     }
     start() {
     }

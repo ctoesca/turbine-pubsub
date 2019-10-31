@@ -4,11 +4,13 @@ import Ttimer = turbine.tools.Ttimer;
 import { ChannelsManager } from './ChannelsManager';
 import { Client } from "./Client";
 import { PurgeService } from "./PurgeService";
+import Tapplication = turbine.Tapplication;
 import ThttpServer = turbine.services.ThttpServer;
 import express = require("express");
 import Promise = require("bluebird");
-export declare class PubSubServer extends turbine.services.TbaseService {
-    clients: any[];
+import { IPubSubServer } from './IPubSubServer';
+export declare class PubSubServer extends turbine.services.TbaseService implements IPubSubServer {
+    connections: Map<string, Client>;
     websocketServer: any;
     httpServer: ThttpServer;
     app: express.Application;
@@ -16,17 +18,17 @@ export declare class PubSubServer extends turbine.services.TbaseService {
     clusterTimer: Ttimer;
     _channelsManager: ChannelsManager;
     purgeService: PurgeService;
-    authenticatedClients: Map<string, any>;
-    constructor(name: any, server: any, config: any);
+    authenticatedClients: Map<string, Client>;
+    constructor(name: string, application: Tapplication, config: any);
     canSubscribe(client: any, channelName: any): Promise<boolean>;
     getDefaultConfig(): {
         "active": boolean;
         "apiPath": string;
         "prefix": string;
         "executionPolicy": string;
-        "useSockjs": boolean;
     };
     start(): void;
+    verifyClient(info: any, done: any): void;
     stop(): void;
     onIsMasterChanged(e: Tevent): void;
     flatify(): Promise<{}>;
@@ -38,8 +40,9 @@ export declare class PubSubServer extends turbine.services.TbaseService {
     sendChannelEvent(type: string, channelName: string, DBClient: any): void;
     onClusterTimer(): void;
     onProcessTimer(evt: Tevent): void;
+    eachConnection(callback: any): void;
     eachClient(callback: any): void;
-    removeClient(client: Client): number;
+    removeClient(client: Client): boolean;
     onConnection(conn: any, req: express.Request): void;
     onClientAuth(e: Tevent): void;
     onDestroyClient(e: Tevent): void;
@@ -49,6 +52,7 @@ export declare class PubSubServer extends turbine.services.TbaseService {
     onRedisPubSubMessage(redisChannel: string, data: any): void;
     publish(messages: any, exclude?: any): any;
     sendToUsers(userNames: string[], messages: any): void;
+    sendToClients(clientsId: string[], messages: any): void;
     sendMessagesToLocalUsersNames(userNames: any, messages: any): void;
     sendMessagesToLocalClients(clientsId: any, messages: any): void;
     disconnectLocalClient(id: string): any;

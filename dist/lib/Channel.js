@@ -9,7 +9,7 @@ class Channel extends TeventDispatcher {
     constructor(name, pubSubServer) {
         super();
         this.maxStoredMessages = 100;
-        this.subscriptions = [];
+        this.subscriptions = new Map();
         this.accessKey = null;
         this.name = name;
         this.pubSubServer = pubSubServer;
@@ -22,45 +22,40 @@ class Channel extends TeventDispatcher {
         this.addChannelInRedis();
     }
     static storeMessage(message) {
-        return new Promise(function (resolve, reject) {
+        return new Promise((resolve, reject) => {
             var channelName = message.channel;
             var key = "channels_messages_" + channelName;
-            app.ClusterManager.getClient().rpush(key, JSON.stringify(message), function (err, result) {
+            app.ClusterManager.getClient().rpush(key, JSON.stringify(message), (err, result) => {
                 if (err) {
                     reject(err);
                     app.logger.debug("storeMessage.rpush: " + err.toString());
                 }
                 else {
-                    app.ClusterManager.getClient().llen(key, function (err, count) {
+                    app.ClusterManager.getClient().llen(key, (err, count) => {
                         if (err) {
                             app.logger.debug("Channel '" + channelName + "': storeMessage.llen: " + err.toString());
                             reject(err);
                         }
                         else {
                             app.logger.debug("Channel '" + channelName + "': storeMessage.llen = " + count);
-                            if (count > this.maxStoredMessages) {
-                                app.ClusterManager.getClient().lpop(key, function (err, result) {
-                                    if (err) {
-                                        app.logger.error("storeMessage.lpop: " + err.toString());
-                                        reject(err);
-                                    }
-                                    else {
-                                        app.logger.debug("storeMessage.lpop: success");
-                                        resolve();
-                                    }
-                                }.bind(this));
-                            }
-                            else {
-                                resolve();
-                            }
+                            app.ClusterManager.getClient().lpop(key, (err, result) => {
+                                if (err) {
+                                    app.logger.error("storeMessage.lpop: " + err.toString());
+                                    reject(err);
+                                }
+                                else {
+                                    app.logger.debug("storeMessage.lpop: success");
+                                    resolve();
+                                }
+                            });
                         }
-                    }.bind(this));
+                    });
                 }
-            }.bind(this));
-        }.bind(this));
+            });
+        });
     }
     onPurgeTimer(e) {
-        if (this.subscriptions.length == 0)
+        if (this.subscriptions.size == 0)
             this.free();
     }
     addChannelInRedis() {
@@ -76,8 +71,8 @@ class Channel extends TeventDispatcher {
     start() {
     }
     getClients() {
-        return new Promise(function (resolve, reject) {
-            app.ClusterManager.getClient().hgetall(this.redisKey, function (err, result) {
+        return new Promise((resolve, reject) => {
+            app.ClusterManager.getClient().hgetall(this.redisKey, (err, result) => {
                 var r = {};
                 for (var key in result) {
                     var channelName = key.rightOf("_");
@@ -88,8 +83,8 @@ class Channel extends TeventDispatcher {
                     }
                 }
                 resolve(r);
-            }.bind(this));
-        }.bind(this));
+            });
+        });
     }
     flatify() {
         return new Promise(function (resolve, reject) {
@@ -105,7 +100,7 @@ class Channel extends TeventDispatcher {
         }.bind(this));
     }
     getMessages() {
-        return new Promise(function (resolve, reject) {
+        return new Promise((resolve, reject) => {
             var key = "channels_messages_" + this.name;
             app.ClusterManager.getClient().lrange(key, 0, -1)
                 .then((result) => {
@@ -120,19 +115,20 @@ class Channel extends TeventDispatcher {
                 this.logger.error("channel.getMessages(): " + err.toString());
                 reject(err);
             });
-        }.bind(this));
+        });
     }
     broadcast(message, filter) {
         var count = 0;
         if (arguments.length > 1) {
-            for (var i = 0; i < this.subscriptions.length; i++) {
-                if (filter(this.subscriptions[i]))
-                    count += this.subscriptions[i].broadcast(message);
-            }
+            this.subscriptions.forEach((sub, key) => {
+                if (filter(sub))
+                    count += sub.broadcast(message);
+            });
         }
         else {
-            for (var i = 0; i < this.subscriptions.length; i++)
-                count += this.subscriptions[i].broadcast(message);
+            this.subscriptions.forEach((sub, key) => {
+                count += sub.broadcast(message);
+            });
         }
         if (count > 0)
             this.logger.debug("Messages envoyés sur channel " + this.name + ": " + count);
@@ -167,41 +163,36 @@ class Channel extends TeventDispatcher {
     }
     createSubscription(client) {
         var sub = new Subscription_1.Subscription(this, client);
-        this.subscriptions.push(sub);
+        this.subscriptions.set(sub.id, sub);
         sub.on("DESTROY", this._onSubscriptionDestroy, this);
         this.logger.trace("createSubscription sur channel " + this.name + ", client=" + client.getShortId());
         return sub;
     }
     unsubscribeClient(client) {
         var r = null;
-        for (var i = 0; i < this.subscriptions.length; i++) {
-            var sub = this.subscriptions[i];
-            if (sub.getClient().instanceId === client.instanceId) {
-                this.logger.debug("Channel.unsubscribeClient client.id=" + client.getShortId() + ", sub.id=" + sub.id);
-                r = sub;
-                sub.free();
-                break;
-            }
+        let sub = this.getSubscription(client);
+        if (sub) {
+            this.logger.debug("Channel.unsubscribeClient client.id=" + client.getShortId() + ", sub.id=" + sub.id);
+            r = sub;
+            sub.free();
         }
         return r;
     }
     _removeSubscriptionById(id) {
-        var r = null;
-        for (var i = 0; i < this.subscriptions.length; i++) {
-            if (this.subscriptions[i].id == id) {
-                var client = this.subscriptions[i].client;
-                if (client.id) {
-                    this.sendChannelEvent(client.id, "unsubscribe");
-                    this.subscriptions.splice(i, 1);
-                    this.logger.debug("Channel.removeSubscription on channel " + this.name + " (cid=" + client.getShortId() + ")");
-                }
-                else {
-                    this.logger.error("_removeSubscriptionById: client.id=" + client.id);
-                }
-                break;
+        var sub = null;
+        if (this.subscriptions.has(id)) {
+            sub = this.subscriptions.get(id);
+            var client = sub.client;
+            if (client.id) {
+                this.sendChannelEvent(client.id, "unsubscribe");
+                this.logger.debug("Channel.removeSubscription on channel " + this.name + " (cid=" + client.getShortId() + ")");
             }
+            else {
+                this.logger.error("_removeSubscriptionById: client.id=" + client.getShortId());
+            }
+            this.subscriptions.delete(id);
         }
-        return r;
+        return sub;
     }
     sendChannelEvent(client, type) {
         var message = {
@@ -222,11 +213,8 @@ class Channel extends TeventDispatcher {
     }
     getSubscriptionById(id) {
         var r = null;
-        for (var i = 0; i < this.subscriptions.length; i++) {
-            if (this.subscriptions[i].id == id) {
-                r = this.subscriptions[i];
-                break;
-            }
+        if (this.subscriptions.has(id)) {
+            r = this.subscriptions.get(id);
         }
         return r;
     }
@@ -235,39 +223,28 @@ class Channel extends TeventDispatcher {
     }
     getSubscription(client) {
         var r = null;
-        var clientId;
-        if (typeof client == "string")
-            clientId = client;
-        else
-            clientId = client.id;
-        for (var i = 0; i < this.subscriptions.length; i++) {
-            var sub = this.subscriptions[i];
-            var c = sub.getClient();
-            if ((c != null) && (c.id === clientId)) {
-                r = sub;
-                break;
-            }
+        let subId = Subscription_1.Subscription.calcId(this.name, client);
+        if (this.subscriptions.has(subId)) {
+            r = this.subscriptions.get(subId);
         }
         return r;
     }
     sendMessages(messages) {
-        for (var i = 0; i < this.subscriptions.length; i++) {
-            var subscription = this.subscriptions[i];
-            var client = subscription.getClient();
+        this.subscriptions.forEach((sub, key) => {
+            var client = sub.getClient();
             if (client != null) {
                 client.sendMessages(messages);
             }
-        }
-        ;
+        });
     }
     free() {
         this.logger.debug("Channel.free: name=" + this.name);
         super.free();
         if (this.subscriptions) {
-            for (var i = 0; i < this.subscriptions.length; i++) {
-                var sub = this.subscriptions[i];
+            this.subscriptions.forEach((sub, key) => {
                 sub.free();
-            }
+            });
+            this.subscriptions.clear();
             this.subscriptions = null;
         }
         if (this.purgeTimer) {

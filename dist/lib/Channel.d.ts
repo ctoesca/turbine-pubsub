@@ -11,7 +11,7 @@ export declare class Channel extends TeventDispatcher {
     maxStoredMessages: number;
     name: string;
     redisKey: string;
-    subscriptions: any[];
+    subscriptions: Map<string, Subscription>;
     logger: any;
     purgeTimer: Ttimer;
     accessKey: string;
@@ -32,7 +32,7 @@ export declare class Channel extends TeventDispatcher {
     sendChannelEvent(client: any, type: string): void;
     _onSubscriptionDestroy(e: Tevent): void;
     getSubscriptionById(id: any): any;
-    getSubscriptions(): any[];
+    getSubscriptions(): Map<string, Subscription>;
     getSubscription(client: Client): any;
     sendMessages(messages: any): void;
     free(): void;
